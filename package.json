@@ -1,0 +1,62 @@
+{
+  "name": "arabiancurb",
+  "version": "1.0.0",
+  "description": "Arabic-first, RTL-aware anti-slop design skills for AI coding and image-generation agents.",
+  "license": "SEE LICENSE IN LICENSE",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "arabiancurb": "index.js"
+  },
+  "files": [
+    "index.js",
+    "skills/**",
+    "assets/arabian-curb-banner.webp",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js",
+    "test": "node --test",
+    "validate": "npm run check && npm test",
+    "verify:package": "node scripts/verify-packed-cli.mjs",
+    "prepack": "npm run validate",
+    "prepublishOnly": "npm run verify:package"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loayabdalslam/ArabianCurb.git"
+  },
+  "bugs": {
+    "url": "https://github.com/loayabdalslam/ArabianCurb/issues"
+  },
+  "homepage": "https://github.com/loayabdalslam/ArabianCurb#readme",
+  "author": "Loay Abdalslam <loaiabdalslam@gmail.com> (https://github.com/loayabdalslam)",
+  "contributors": [
+    "Yu-369 (original VibeCurb project)"
+  ],
+  "keywords": [
+    "ai-skills",
+    "arabic",
+    "rtl",
+    "web-design",
+    "design-system",
+    "image-generation",
+    "codex",
+    "cursor",
+    "frontend",
+    "awwwards"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "inquirer": "^9.2.12",
+    "ora": "^7.0.1"
+  }
+}
