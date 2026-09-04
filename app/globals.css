@@ -440,7 +440,7 @@ a { color: inherit; text-decoration: none; }
    Modal / onboarding
    ===================================================================== */
 .o-backdrop { position: fixed; inset: 0; background: rgba(17, 17, 30, 0.45); backdrop-filter: blur(7px); z-index: 40; display: grid; place-items: center; padding: 20px; }
-.o-modal { width: min(660px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 28px; box-shadow: var(--shadow-float); }
+.o-modal { width: min(660px, 100%); max-height: 92vh; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 28px; box-shadow: var(--shadow-float); }
 .o-modal-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .o-modal-top .o-brand { padding: 0; }
 .o-modal .o-banner { margin: -28px -28px 22px; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
@@ -617,16 +617,20 @@ a { color: inherit; text-decoration: none; }
 .o-tutorial-step { display: flex; gap: 12px; align-items: flex-start; background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; }
 .o-tutorial-step i { width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; font-style: normal; font-weight: 700; font-size: 12px; display: grid; place-items: center; flex-shrink: 0; }
 .o-tutorial-step b { font-size: 13px; display: block; }
-.o-tutorial-step p { font-size: 12px; color: var(--text-2); margin-top: 2px; line-height: 1.5; }
+.o-tutorial-step p { font-size: 12px; color: var(--text-2); margin-top: 2px; line-height: 1.5; overflow-wrap: anywhere; }
+.o-tutorial-step > div { min-width: 0; flex: 1; }
 .o-tutorial-step a.o-btn { display: inline-flex; }
-.o-onb-connect { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.o-onb-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
+.o-onb-connect { display: grid; grid-template-columns: 1fr; gap: 14px; min-width: 0; }
+.o-onb-connect > * { min-width: 0; }
+.o-onb-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); min-width: 0; overflow: hidden; }
+.o-onb-card .o-form-grid { grid-template-columns: 1fr 1fr; }
+.o-onb-card .o-btn { align-self: flex-start; }
 .o-onb-card > .o-flex b { font-size: 14px; }
 .o-danger { margin-top: 16px; padding: 14px; border: 1px solid color-mix(in srgb, var(--coral) 45%, var(--line)); background: var(--coral-soft); border-radius: var(--radius-sm); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .o-danger > div { flex: 1; min-width: 240px; }
 .o-danger b { display: block; font-size: 13px; color: var(--coral); }
 .o-danger small { font-size: 11px; color: var(--text-2); }
-@media (max-width: 800px) { .o-onb-connect { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .o-onb-card .o-form-grid { grid-template-columns: 1fr; } }
 .o-pre { margin: 12px 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface-2); font: 11px/1.5 var(--font-mono); color: var(--muted); }
 
 /* Module hero */

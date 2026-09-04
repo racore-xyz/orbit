@@ -1142,7 +1142,7 @@ function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<
   );
   return (
     <div className="o-backdrop">
-      <div className="o-modal" style={{ width: 'min(760px, 100%)' }}>
+      <div className="o-modal" style={{ width: 'min(820px, 100%)' }}>
         <div className="o-banner">
           <Brand size="sm" />
           <Sparkles size={18} className="o-spark" />
