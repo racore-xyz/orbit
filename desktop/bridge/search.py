@@ -204,9 +204,27 @@ def exa_live_check():
         return False, str(e)[:200]
 
 
+def ensure_ytdlp_js_runtime():
+    """yt-dlp needs a JS runtime for YouTube; the bundled Node is on PATH, so enable it once
+    (the same change Agent Reach's `render_ytdlp_fix_command()` asks the user to make)."""
+    try:
+        from agent_reach.utils.paths import get_ytdlp_config_path
+
+        cfg = get_ytdlp_config_path()
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        existing = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+        if "--js-runtimes" not in existing and which("node"):
+            sep = "" if not existing or existing.endswith("\n") else "\n"
+            with open(cfg, "a", encoding="utf-8") as f:
+                f.write(sep + "--js-runtimes node\n")
+    except Exception:
+        pass
+
+
 def doctor():
     checks = []
     have_pkg = True
+    ensure_ytdlp_js_runtime()
     try:
         from agent_reach.core import AgentReach  # noqa
 
@@ -225,14 +243,22 @@ def doctor():
         if not r:
             continue
         status = r.get("status")
+        bundled = key in ("youtube", "twitter", "reddit", "facebook", "instagram", "xiaohongshu") and bool(which("twitter") or which("opencli") or which("yt-dlp"))
+        if status == "ok":
+            detail = r.get("active_backend") or ""
+        elif bundled:
+            detail = "installed (bundled) · needs your login/session"
+        else:
+            detail = "not installed · optional"
         checks.append(
             {
                 "id": key,
                 "label": LABELS.get(key, key),
                 "ok": status == "ok",
                 "required": False,
-                "status": status,
-                "detail": (r.get("active_backend") or "") if status == "ok" else "not configured",
+                "status": "warn" if (status != "ok" and bundled) else status,
+                "detail": detail,
+                "message": (r.get("message") or "")[:300],
                 "fix": FIXES.get(key),
             }
         )

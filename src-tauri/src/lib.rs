@@ -46,7 +46,11 @@ fn bridge_cmd() -> Result<Command, String> {
     cmd.env("ORBIT_MCPORTER_CLI", cli);
   }
   if let Some(cfg) = resource("mcporter.json") { cmd.env("MCPORTER_CONFIG", cfg); }
+  // Bundled extension CLIs (yt-dlp, twitter, rdt, xhs, ffmpeg, opencli, node, mcporter) come first on
+  // PATH so Agent Reach's doctor and channels find them with nothing installed on the machine.
   let mut path = std::env::var("PATH").unwrap_or_default();
+  if let Some(bin) = resource("tools/bin") { path = format!("{};{path}", bin.to_string_lossy()); }
+  if let Some(node) = resource("node/node_modules/node/bin") { path = format!("{};{path}", node.to_string_lossy()); }
   if let Ok(appdata) = std::env::var("APPDATA") {
     for v in ["Python314", "Python313", "Python312"] { path = format!("{path};{appdata}\\Python\\{v}\\Scripts"); }
     path = format!("{path};{appdata}\\npm");
@@ -121,6 +125,16 @@ fn bridge_enrich_stream(app: tauri::AppHandle, job_id: String, leads_json: Strin
   let file = dir.join(format!("enrich-{job_id}.json"));
   std::fs::write(&file, leads_json).map_err(|e| e.to_string())?;
   stream_bridge(app, job_id, vec!["enrich-stream".into(), file.to_string_lossy().into_owned(), limit.unwrap_or(50).to_string()])
+}
+
+/// Social Media → Reddit research through Arctic Shift, streamed like the other research jobs.
+#[tauri::command]
+fn social_reddit_stream(app: tauri::AppHandle, job_id: String, params_json: String) -> Result<(), String> {
+  let dir = std::env::temp_dir().join("orbit-bridge");
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  let file = dir.join(format!("reddit-{job_id}.json"));
+  std::fs::write(&file, params_json).map_err(|e| e.to_string())?;
+  stream_bridge(app, job_id, vec!["reddit-stream".into(), file.to_string_lossy().into_owned()])
 }
 
 #[tauri::command]
@@ -335,7 +349,7 @@ fn provider_env_status() -> serde_json::Value {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

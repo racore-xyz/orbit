@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { siAnthropic, siGooglegemini, siMistralai, siOpenrouter } from 'simple-icons';
-import { Activity, BarChart3, Bot, Check, ChevronRight, Compass, Copy, Download, ExternalLink, FileText, History, Inbox, KeyRound, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
+import { siAnthropic, siFacebook, siGooglegemini, siInstagram, siMistralai, siOpenrouter, siReddit, siTiktok, siX, siYoutube } from 'simple-icons';
+import { Activity, BarChart3, Bot, Check, ChevronRight, Compass, Copy, Download, ExternalLink, FileText, History, Inbox, KeyRound, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
 import {
   AppShell,
   Btn,
@@ -12,6 +12,7 @@ import {
   EmptyState,
   IconTile,
   LangToggle,
+  Bars,
   Brand,
   ModuleHero,
   PageHead,
@@ -31,7 +32,7 @@ import {
 
 
 type T = (en: string, ar: string) => string;
-const TAB = { dashboard: 0, leads: 1, crm: 2, campaigns: 3, outreach: 4, templates: 5, research: 6, agents: 7, integrations: 8, history: 9, settings: 10 } as const;
+const TAB = { dashboard: 0, leads: 1, crm: 2, campaigns: 3, outreach: 4, templates: 5, research: 6, social: 7, agents: 8, integrations: 9, history: 10, settings: 11 } as const;
 
 export default function DesktopApp() {
   const { dark, toggleDark, lang, toggleLang, rtl, t } = useTheme();
@@ -45,7 +46,7 @@ export default function DesktopApp() {
   const [guideStep, setGuideStep] = useState(0);
   const [guideHidden, setGuideHidden] = useState(false);
   const endDemo = async () => { try { await invoke('workspace_demo_clear'); } finally { setGuideHidden(true); setGuideStep(0); setTab(0); await reloadWs(); } };
-  const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? TAB.research : TAB.leads); };
+  const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? TAB.research : mode === 'reddit' ? TAB.social : TAB.leads); };
   const [outreachSeed, setOutreachSeed] = useState<Lead[] | null>(null);
   const sendToOutreach = (leads: Lead[]) => { setOutreachSeed(leads); setTab(TAB.outreach); };
   const [agentic, setAgentic] = useState(() => localStorage.getItem('orbit.agenticMode') !== 'off');
@@ -62,6 +63,7 @@ export default function DesktopApp() {
         { label: t('Outreach', 'التواصل'), icon: MessageSquare },
         { label: t('Templates', 'القوالب'), icon: FileText },
         { label: t('Market Research', 'أبحاث السوق'), icon: Compass },
+        { label: t('Social Media', 'وسائل التواصل'), icon: Radio },
         { label: t('AI Agents', 'وكلاء الذكاء الاصطناعي'), icon: Bot },
         { label: t('Integrations', 'التكاملات'), icon: Plug },
         { label: t('History', 'سجل البحث'), icon: History },
@@ -101,6 +103,7 @@ export default function DesktopApp() {
       {tab === 4 && <Outreach t={t} seed={outreachSeed} onSeeded={() => setOutreachSeed(null)} />}
       {tab === TAB.templates && <TemplatesPage t={t} />}
       {tab === TAB.research && <LeadFinder t={t} mode="research" openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
+      {tab === TAB.social && <SocialPage t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} />}
       {tab === TAB.agents && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
       {tab === TAB.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
       {tab === TAB.history && <HistoryPage t={t} onOpen={openSavedRun} />}
@@ -263,7 +266,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
   const [st, setSt] = useState<IntStatus | null>(null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
-  const [reach, setReach] = useState<{ ready: boolean; checks: { id: string; label: string; ok: boolean; required: boolean; detail?: string; fix?: string }[] } | null>(null);
+  const [reach, setReach] = useState<{ ready: boolean; checks: { id: string; label: string; ok: boolean; required: boolean; status?: string; detail?: string; fix?: string }[] } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [g, setG] = useState({ address: '', app_password: '', test_to: '' });
   const [s, setS] = useState({ host: '', port: '587', username: '', password: '', from: '', security: 'starttls', test_to: '' });
@@ -405,7 +408,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
               <div className="o-int-form">
                 {reach ? reach.checks.map((k) => (
                   <div key={k.id} className="o-row">
-                    <Chip tone={k.ok ? 'green' : k.required ? 'coral' : 'neutral'}>{k.ok ? 'OK' : k.required ? t('Missing', 'مفقود') : t('Optional', 'اختياري')}</Chip>
+                    <Chip tone={k.ok ? 'green' : k.required ? 'coral' : k.status === 'warn' ? 'orange' : 'neutral'}>{k.ok ? 'OK' : k.required ? t('Missing', 'مفقود') : k.status === 'warn' ? t('Needs login', 'يحتاج تسجيل دخول') : t('Optional', 'اختياري')}</Chip>
                     <div><b>{k.label}</b><small>{k.ok ? k.detail : k.fix || k.detail}</small></div>
                   </div>
                 )) : <p className="o-note">{t('Checking…', 'جاري الفحص…')}</p>}
@@ -798,7 +801,7 @@ function HistoryPage({ t, onOpen }: { t: T; onOpen: (id: string, mode: string) =
             {runs.map((r) => (
               <tr key={r.id} className="o-row-click" onClick={() => onOpen(r.id, r.mode)}>
                 <td><b>{r.query}</b><br /><span className="o-id">{r.id}</span></td>
-                <td><Chip tone={r.mode === 'research' ? 'orange' : 'violet'}>{r.mode === 'research' ? t('Market Research', 'أبحاث السوق') : t('Lead Finder', 'البحث عن العملاء')}</Chip></td>
+                <td><Chip tone={r.mode === 'research' ? 'orange' : r.mode === 'reddit' ? 'coral' : 'violet'}>{r.mode === 'research' ? t('Market Research', 'أبحاث السوق') : r.mode === 'reddit' ? 'Reddit' : t('Lead Finder', 'البحث عن العملاء')}</Chip></td>
                 <td>{r.count.toLocaleString()} / {r.target}{r.enriched ? <Chip tone="green"> ✓</Chip> : null}</td>
                 <td>{new Date(r.saved_at).toLocaleString()}</td>
                 <td style={{ fontSize: 11 }}>{r.export?.paths?.xlsx ? 'XLSX' : r.export?.paths?.csv ? 'CSV' : '—'}</td>
@@ -1387,6 +1390,7 @@ function Guide({ t, step, setStep, go, openRun, finish, hide }: { t: T; step: nu
     { title: t('Lead Finder', 'البحث عن العملاء'), text: t('Describe a persona, set a target, and results stream in live through Agent Reach. This sample run holds 8 leads with company facts, published emails and a stable ORB id. Click any row to open its identity card.', 'صف شخصية، حدد العدد، وتصل النتائج لحظياً عبر Agent Reach. هذه العملية التجريبية فيها 8 عملاء ببيانات الشركة والإيميلات المنشورة ومعرّف ORB ثابت. اضغط أي صف لفتح بطاقة الهوية.'), tab: 1, run: 'demo-leads', place: 'bottom' },
     { title: t('Enrich and export', 'الإثراء والتصدير'), text: t('“Enrich” reads each company site and LinkedIn page for logos, photos and published emails. Every run is exported to Excel in Documents\\orbit and saved to History automatically.', '“الإثراء” يقرأ موقع كل شركة وصفحة LinkedIn للشعارات والصور والإيميلات المنشورة. كل عملية تُصدَّر إلى Excel في Documents\\orbit وتُحفظ في السجل تلقائياً.'), tab: 1, place: 'bottom' },
     { title: t('Market Research', 'أبحاث السوق'), text: t('Same engine, different angles: reports, competitors, news, funding. Rows are typed (company, article, page) with Markdown notes.', 'نفس المحرك بزوايا مختلفة: تقارير، منافسون، أخبار، تمويل. الصفوف مصنّفة (شركة، مقال، صفحة) مع ملاحظات Markdown.'), tab: TAB.research, run: 'demo-research', place: 'bottom' },
+    { title: t('Social Media', 'وسائل التواصل'), text: t('Reddit through Arctic Shift: type a topic, orbit. discovers subreddits, pulls a year of posts and the comments under the most discussed ones, charts the trend, and the model writes a market report: established vs emerging markets, opportunities, and what people really think.', 'Reddit عبر Arctic Shift: اكتب موضوعاً، يكتشف orbit. المجتمعات، يسحب سنة من المنشورات والتعليقات تحت الأكثر نقاشاً، يرسم الاتجاه، ويكتب النموذج تقرير سوق: أسواق قائمة وناشئة، فرص، وآراء الناس الحقيقية.'), tab: TAB.social, place: 'bottom' },
     { title: t('Outreach', 'التواصل'), text: t('A WhatsApp-style inbox. Sara already replied, Omar is on follow-up 1 and due today, Layla was sent this morning, two are drafts. Open a thread to see the stepper, the sequence and the composer.', 'صندوق بأسلوب واتساب. سارة ردّت بالفعل، عمر في المتابعة 1 ومستحق اليوم، ليلى أُرسل لها صباح اليوم، واثنان مسودات. افتح محادثة لترى الخطوات والتسلسل والمحرر.'), tab: 4, place: 'bottom' },
     { title: t('Your writing style', 'أسلوبك في الكتابة'), text: t('Click “My writing style”, paste a few emails you wrote, and Learn. Drafts then follow your tone, and every edit you make before sending is learned too. “Send due follow-ups” handles the rest.', 'اضغط “أسلوبي في الكتابة”، الصق رسائل كتبتها، ثم تعلّم. المسودات تتبع نبرتك بعدها، وكل تعديل قبل الإرسال يُتعلَّم أيضاً. “إرسال المتابعات المستحقة” يتكفل بالباقي.'), tab: 4, place: 'bottom' },
     { title: t('Templates', 'القوالب'), text: t('Write your first email once, in your own words, with placeholders like {{first_name}} and {{company}}. Generate 3–5 variants in your style, then Outreach auto-fills them for every lead and tracks which variant gets replies.', 'اكتب رسالتك الأولى مرة واحدة بكلماتك مع placeholders مثل {{first_name}} و{{company}}. ولّد 3–5 نسخ بأسلوبك، ثم يملؤها التواصل تلقائياً لكل عميل ويتتبع أي نسخة تجلب الردود.'), tab: TAB.templates, place: 'bottom' },
@@ -1520,6 +1524,187 @@ function TemplatesPage({ t }: { t: T }) {
           ) : <EmptyState icon={FileText} title={t('Select or create a template', 'اختر أو أنشئ قالباً')} text="" />}
         </section>
       </div>
+    </>
+  );
+}
+
+type RPost = { id: string; title: string; subreddit: string; score: number; num_comments: number; created?: string | null; month?: string | null; text: string; url?: string; permalink: string; author?: string; flair?: string | null };
+type RComment = { id: string; body: string; score: number; created?: string | null; author?: string; subreddit?: string; post_title?: string; permalink?: string };
+type RResult = { query: string; since: string; subreddits: string[]; discovered: { name: string; subscribers: number }[]; count: number; comments: number; timeline: { month: string; posts: number; comments: number; score: number }[]; trend_percent: number; top_subreddits: { subreddit: string; posts: number; engagement: number }[]; top_terms: { term: string; count: number }[]; top_posts: RPost[]; opinions: RComment[]; posts: RPost[]; fetched_at: string };
+
+const SOCIAL_CHANNELS = [
+  { id: 'reddit', name: 'Reddit', icon: siReddit, ready: true, note: 'Arctic Shift archive · no login' },
+  { id: 'x', name: 'X / Twitter', icon: siX, ready: false, note: 'Agent Reach twitter-cli (bundled) · needs your session' },
+  { id: 'youtube', name: 'YouTube', icon: siYoutube, ready: false, note: 'Agent Reach yt-dlp (bundled)' },
+  { id: 'facebook', name: 'Facebook', icon: siFacebook, ready: false, note: 'Agent Reach OpenCLI (bundled) · needs your session' },
+  { id: 'instagram', name: 'Instagram', icon: siInstagram, ready: false, note: 'Agent Reach OpenCLI (bundled) · needs your session' },
+  { id: 'tiktok', name: 'TikTok', icon: siTiktok, ready: false, note: 'coming' },
+];
+
+function redditPrompt(r: RResult, lang: string) {
+  const posts = r.top_posts.slice(0, 30).map((p) => `- [r/${p.subreddit} · ${p.score}↑ ${p.num_comments}💬 · ${p.month}] ${p.title} :: ${p.text.slice(0, 240)}`).join('\n');
+  const ops = r.opinions.slice(0, 40).map((c) => `- (${c.score}↑, r/${c.subreddit}) ${c.body.slice(0, 240)}`).join('\n');
+  const tl = r.timeline.map((x) => `${x.month}: ${x.posts} posts`).join(', ');
+  return `You are a market analyst. Analyse Reddit discussion about: "${r.query}" (since ${r.since}).\n\nTIMELINE (posts per month): ${tl}\nTREND (recent half vs earlier half): ${r.trend_percent}%\nTOP SUBREDDITS: ${r.top_subreddits.slice(0, 10).map((s) => `r/${s.subreddit} (${s.posts})`).join(', ')}\nTOP TERMS: ${r.top_terms.slice(0, 20).map((t2) => t2.term).join(', ')}\n\nTOP POSTS:\n${posts}\n\nPEOPLE'S OPINIONS (comments):\n${ops}\n\nWrite a Markdown report in ${lang === 'ar' ? 'Arabic' : 'English'} with these sections: 1) Established markets (what people already buy/use, incumbents), 2) Emerging markets and new niches (what is growing, with evidence from the timeline/terms), 3) Opportunities (concrete gaps, unmet needs, who has the pain), 4) What people think (opinions, objections, praise, pricing sensitivity), 5) Pain points ranked, 6) 5 quotable lines with subreddit attribution, 7) Recommended next actions for a founder or growth team. Be specific, cite subreddits, never invent numbers that are not in the data.`;
+}
+
+function SocialPage({ t, openRunId, onOpened }: { t: T; openRunId?: string | null; onOpened?: () => void }) {
+  const [channel, setChannel] = useState('reddit');
+  const [query, setQuery] = useState('');
+  const [subs, setSubs] = useState('');
+  const [months, setMonths] = useState(12);
+  const [busy, setBusy] = useState<'run' | 'analyze' | null>(null);
+  const [error, setError] = useState('');
+  const [res, setRes] = useState<RResult | null>(null);
+  const [live, setLive] = useState<RPost[]>([]);
+  const [progress, setProgress] = useState<{ percent: number; label: string }>({ percent: 0, label: '' });
+  const [feed, setFeed] = useState<string[]>([]);
+  const [report, setReport] = useState('');
+  const [runId, setRunId] = useState<string | null>(null);
+  const [history, setHistory] = useState<RunMeta[]>([]);
+  const [view, setView] = useState<'posts' | 'opinions' | 'report'>('posts');
+  const jobRef = useRef<string | null>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+  const stop = () => { unlistenRef.current?.(); unlistenRef.current = null; jobRef.current = null; };
+  const loadHistory = async () => { try { const all = await invoke<RunMeta[]>('run_list'); setHistory(all.filter((r) => r.mode === 'reddit')); } catch { /* ignore */ } };
+  const openRun = async (id: string) => { try { const r = await invoke<{ id: string; query: string; result: RResult; report?: string; saved_at: string }>('run_get', { id }); setRes(r.result); setLive(r.result.posts); setQuery(r.query); setReport(r.report || ''); setRunId(r.id); setProgress({ percent: 100, label: t(`Loaded from history · ${new Date(r.saved_at).toLocaleString()}`, `تم التحميل من السجل · ${new Date(r.saved_at).toLocaleString()}`) }); setView(r.report ? 'report' : 'posts'); } catch (e) { setError(String(e)); } };
+  const saveRun = async (id: string, r: RResult, extra: Record<string, unknown> = {}) => { try { await invoke('run_save', { run: { id, mode: 'reddit', query: r.query, target: r.subreddits.length, calls: [], fetched_at: r.fetched_at, leads: r.posts, result: r, saved_at: new Date().toISOString(), ...extra } }); await loadHistory(); } catch (e) { setError(String(e)); } };
+  /* oxlint-disable react/react-compiler -- load history once; open a run from History */
+  useEffect(() => { void loadHistory(); return () => { if (jobRef.current) void invoke('bridge_cancel', { jobId: jobRef.current }); stop(); }; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (openRunId) { void openRun(openRunId); onOpened?.(); } }, [openRunId]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+
+  const run = async () => {
+    if (!query.trim()) { setError(t('Type a topic, product or market first.', 'اكتب موضوعاً أو منتجاً أو سوقاً أولاً.')); return; }
+    const jobId = `reddit-${Date.now()}`;
+    jobRef.current = jobId; setRunId(jobId);
+    setBusy('run'); setError(''); setRes(null); setLive([]); setFeed([]); setReport(''); setView('posts');
+    setProgress({ percent: 0, label: t('Discovering subreddits…', 'جاري اكتشاف المجتمعات…') });
+    unlistenRef.current = await listen<Record<string, unknown>>(`bridge://${jobId}`, (ev) => {
+      const e = ev.payload as { type: string; percent?: number; query?: string; count?: number; new?: number; leads?: RPost[]; subreddits?: string[]; error?: string; fatal?: boolean; result?: RResult; index?: number; planned_calls?: number };
+      if (e.type === 'start') { setProgress({ percent: 0, label: t(`${e.subreddits?.length} subreddits: ${e.subreddits?.slice(0, 6).map((s) => 'r/' + s).join(', ')}…`, `${e.subreddits?.length} مجتمع: ${e.subreddits?.slice(0, 6).map((s) => 'r/' + s).join('، ')}…`) }); }
+      else if (e.type === 'call') { setProgress({ percent: e.percent ?? 0, label: `${e.index}/${e.planned_calls} · ${e.query}` }); }
+      else if (e.type === 'batch') { setLive((l) => [...l, ...(e.leads || [])]); setProgress({ percent: e.percent ?? 0, label: t(`+${e.new} from ${e.query} · ${e.count} posts`, `+${e.new} من ${e.query} · ${e.count} منشور`) }); setFeed((f) => [`+${e.new}  ${e.query}`, ...f].slice(0, 10)); }
+      else if (e.type === 'error') { setFeed((f) => [`! ${e.query || ''} ${e.error}`, ...f].slice(0, 10)); if (e.fatal) { setError(e.error || 'failed'); setBusy(null); stop(); } }
+      else if (e.type === 'done' && e.result) { setRes(e.result); setLive(e.result.posts); setProgress({ percent: 100, label: t(`Done · ${e.result.count} posts · ${e.result.comments} comments`, `اكتمل · ${e.result.count} منشور · ${e.result.comments} تعليق`) }); void saveRun(jobId, e.result); void invoke('workspace_log', { kind: 'research', text: `Reddit: “${e.result.query}” → ${e.result.count} posts, ${e.result.comments} comments` }); setBusy(null); stop(); }
+      else if (e.type === 'cancelled') { setBusy(null); stop(); }
+    });
+    try { await invoke('social_reddit_stream', { jobId, paramsJson: JSON.stringify({ query, subreddits: subs.split(/[,\s]+/).filter(Boolean), months, discover: true, include_comments: true }) }); }
+    catch (err) { setError(String(err)); setBusy(null); stop(); }
+  };
+  const cancel = async () => { if (jobRef.current) await invoke('bridge_cancel', { jobId: jobRef.current }); };
+  const analyze = async () => {
+    if (!res) return;
+    setBusy('analyze'); setError('');
+    try {
+      const ws = await invoke<WsSummary>('workspace_get');
+      const md = await invoke<string>('llm_complete', { system: 'You are a rigorous market analyst. Output Markdown only.', prompt: redditPrompt(res, ws.workspace.profile.language), maxTokens: 1800 });
+      setReport(md); setView('report');
+      if (runId) await saveRun(runId, res, { report: md });
+      void invoke('workspace_log', { kind: 'research', text: `Reddit market report generated for “${res.query}”` });
+    } catch (e) { setError(String(e)); } finally { setBusy(null); }
+  };
+  const ch = SOCIAL_CHANNELS.find((c) => c.id === channel)!;
+  const shown = res ? (view === 'posts' ? res.top_posts : []) : live.slice(-30).reverse();
+
+  return (
+    <>
+      <PageHead eyebrow={t('Social listening', 'رصد المجتمعات')} title={t('Social Media', 'وسائل التواصل')} spark={false} sub={t('Explore established and emerging markets, opportunities and real opinions from public conversations.', 'استكشف الأسواق القائمة والناشئة والفرص والآراء الحقيقية من المحادثات العامة.')} />
+      <div className="o-social-bar">
+        {SOCIAL_CHANNELS.map((c) => (
+          <button key={c.id} className={`o-social-chip${channel === c.id ? ' active' : ''}${c.ready ? '' : ' soon'}`} onClick={() => setChannel(c.id)} title={c.note}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d={c.icon.path} fill="currentColor" /></svg>
+            <span>{c.name}</span>
+            {!c.ready && <small>{t('soon', 'قريباً')}</small>}
+          </button>
+        ))}
+      </div>
+      {error && <div className="o-result error">{error}</div>}
+      {channel !== 'reddit' ? (
+        <Card><EmptyState icon={Radio} title={`${ch.name} · ${t('via Agent Reach', 'عبر Agent Reach')}`} text={t(`${ch.note}. The extension ships with the installer; connecting your own session is the next step.`, `${ch.note}. الإضافة مضمّنة مع المثبّت؛ ربط جلستك الخاصة هو الخطوة التالية.`)} /></Card>
+      ) : (
+        <>
+          <Card>
+            <div className="o-research-input">
+              <div className="o-icon-tile violet" style={{ color: '#FF4500', background: '#FFEDE6' }}><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d={siReddit.path} fill="currentColor" /></svg></div>
+              <input className="o-input" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run()} placeholder={t('Topic, product or market, e.g. "invoicing for freelancers" or "fintech Saudi"', 'موضوع أو منتج أو سوق، مثال: "فوترة للمستقلين" أو "fintech Saudi"')} />
+              <input className="o-input" style={{ width: 240 }} value={subs} onChange={(e) => setSubs(e.target.value)} placeholder={t('subreddits (optional): startups, Egypt', 'مجتمعات (اختياري): startups, Egypt')} />
+              <label className="o-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>{t('Months', 'شهور')}<input type="number" min={1} max={60} value={months} onChange={(e) => setMonths(Number(e.target.value) || 12)} style={{ width: 70 }} /></label>
+              <Btn onClick={run} disabled={busy !== null}>{busy === 'run' ? t('Listening…', 'جاري الرصد…') : t('Explore', 'استكشف')}</Btn>
+            </div>
+            {(busy || progress.percent > 0) && (
+              <div className="o-loader">
+                <div className="o-loader-head"><span className={`o-spinner${busy ? '' : ' done'}`} /><b>{progress.percent}%</b><span className="o-loader-label">{progress.label}</span>{busy === 'run' && <Btn variant="ghost" size="sm" onClick={cancel}>{t('Cancel', 'إلغاء')}</Btn>}</div>
+                <div className="o-progress lg"><i style={{ width: `${progress.percent}%` }} /></div>
+                {feed.length > 0 && <ul className="o-feed">{feed.map((f, i) => <li key={i} style={{ opacity: 1 - i * 0.08 }}>{f}</li>)}</ul>}
+              </div>
+            )}
+            <p className="o-note">{t('Source: Arctic Shift public Reddit archive. Requests are paced to respect its rate limit; a full run takes one to three minutes. Every post links back to Reddit.', 'المصدر: أرشيف Reddit العام Arctic Shift. الطلبات متباعدة احتراماً لحد الاستخدام؛ العملية الكاملة تستغرق من دقيقة إلى ثلاث. كل منشور يرتبط بـ Reddit.')}</p>
+          </Card>
+
+          {res && (
+            <>
+              <div className="o-grid o-grid-4">
+                <StatCard icon={Radio} label={t('Posts', 'منشورات')} value={res.count.toLocaleString()} trend={res.trend_percent} tone="coral" />
+                <StatCard icon={MessageSquare} label={t('Opinions (comments)', 'آراء (تعليقات)')} value={res.comments.toLocaleString()} trend={null} tone="violet" />
+                <StatCard icon={Users} label={t('Subreddits', 'مجتمعات')} value={String(res.top_subreddits.length)} trend={null} tone="sky" />
+                <StatCard icon={Activity} label={t('Engagement', 'تفاعل')} value={res.posts.reduce((a, p) => a + p.score + p.num_comments, 0).toLocaleString()} trend={null} tone="green" />
+              </div>
+              <div className="o-grid o-grid-main">
+                <Card>
+                  <CardHead title={t('Conversation over time', 'الحديث عبر الزمن')} sub={t(`Posts per month since ${res.since} · trend ${res.trend_percent > 0 ? '+' : ''}${res.trend_percent}%`, `منشورات شهرياً منذ ${res.since} · اتجاه ${res.trend_percent > 0 ? '+' : ''}${res.trend_percent}%`)} />
+                  {res.timeline.length ? <Bars data={res.timeline.map((x) => ({ x: x.month, posts: x.posts }))} dataKey="posts" highlight={res.timeline[res.timeline.length - 1]?.month} small /> : <EmptyState icon={BarChart3} title={t('No dated posts', 'لا منشورات مؤرخة')} text="" />}
+                </Card>
+                <Card>
+                  <CardHead title={t('Where the market talks', 'أين يتحدث السوق')} sub={t('Top subreddits by posts', 'أعلى المجتمعات بالمنشورات')} />
+                  {res.top_subreddits.slice(0, 8).map((s) => <Tile key={s.subreddit} title={`r/${s.subreddit}`} big={String(s.posts)} left={t(`${s.engagement.toLocaleString()} engagement`, `${s.engagement.toLocaleString()} تفاعل`)} right="" progress={(s.posts / (res.top_subreddits[0]?.posts || 1)) * 100} />)}
+                </Card>
+                <Card>
+                  <CardHead title={t('What people say', 'ما يقوله الناس')} sub={t('Most frequent terms', 'أكثر المصطلحات تكراراً')} />
+                  <div className="o-tokens">{res.top_terms.map((x) => <span key={x.term} className="o-token" style={{ fontSize: `${Math.min(16, 10 + x.count / (res.top_terms[0]?.count || 1) * 6)}px` }}>{x.term} <small className="o-muted">{x.count}</small></span>)}</div>
+                  {res.discovered.length > 0 && <p className="o-note">{t('Discovered', 'مكتشفة')}: {res.discovered.map((d) => `r/${d.name} (${(d.subscribers || 0).toLocaleString()})`).join(', ')}</p>}
+                </Card>
+              </div>
+              <Card>
+                <CardHead title={t('Market report', 'تقرير السوق')} sub={t('Established vs emerging markets, opportunities, opinions and pain points, written by your default model from the data above.', 'أسواق قائمة وناشئة، فرص، آراء ونقاط ألم، يكتبها نموذجك الافتراضي من البيانات أعلاه.')}
+                  action={<div className="o-flex"><div className="o-chat-filters" style={{ padding: 0, border: 0 }}>{(['posts', 'opinions', 'report'] as const).map((v) => <button key={v} className={`o-chip ${view === v ? 'violet' : 'neutral'} pill`} onClick={() => setView(v)}>{v === 'posts' ? t('Top posts', 'أهم المنشورات') : v === 'opinions' ? t('Opinions', 'الآراء') : t('Report', 'التقرير')}</button>)}</div><Btn variant="ai" size="sm" icon={Sparkles} onClick={analyze} disabled={busy !== null}>{busy === 'analyze' ? t('Analysing…', 'جاري التحليل…') : report ? t('Regenerate report', 'إعادة توليد التقرير') : t('Analyze with AI', 'حلّل بالذكاء الاصطناعي')}</Btn></div>} />
+                {view === 'report' && (report ? <Md text={report} /> : <EmptyState icon={Sparkles} title={t('No report yet', 'لا يوجد تقرير بعد')} text={t('Click “Analyze with AI”. Needs an LLM key under Integrations.', 'اضغط “حلّل بالذكاء الاصطناعي”. يتطلب مفتاح نموذج من التكاملات.')} />)}
+                {view === 'opinions' && (res.opinions.length ? res.opinions.slice(0, 40).map((c) => (
+                  <div key={c.id} className="o-bubble in" style={{ maxWidth: '100%', marginBottom: 8 }}>
+                    <div className="o-bubble-meta">r/{c.subreddit} · {c.score}↑ · {c.author} · {c.created ? new Date(c.created).toLocaleDateString() : ''} · <a href={c.permalink} target="_blank" rel="noreferrer">{t('thread', 'الموضوع')}</a></div>
+                    <p>{c.body}</p>
+                    <small className="o-muted">{t('on', 'على')}: {c.post_title}</small>
+                  </div>
+                )) : <EmptyState icon={MessageSquare} title={t('No comments collected', 'لم تُجمع تعليقات')} text="" />)}
+                {view === 'posts' && (
+                  <Table columns={[t('Post', 'المنشور'), 'r/', t('Score', 'التقييم'), t('Comments', 'تعليقات'), t('Date', 'التاريخ'), t('Flair', 'الوسم')]}>
+                    {shown.map((p) => (
+                      <tr key={p.id} className="o-row-click" onClick={() => window.open(p.permalink, '_blank')}>
+                        <td style={{ whiteSpace: 'normal', maxWidth: 520 }}><b>{p.title}</b>{p.text && <><br /><small className="o-muted">{p.text.slice(0, 160)}</small></>}</td>
+                        <td>r/{p.subreddit}</td><td>{p.score}</td><td>{p.num_comments}</td><td>{p.created ? new Date(p.created).toLocaleDateString() : '—'}</td><td>{p.flair || '—'}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                )}
+              </Card>
+            </>
+          )}
+          {!res && live.length > 0 && (
+            <Card>
+              <CardHead title={t('Arriving live', 'يصل لحظياً')} sub={t(`${live.length} posts so far`, `${live.length} منشور حتى الآن`)} />
+              <Table columns={[t('Post', 'المنشور'), 'r/', t('Score', 'التقييم'), t('Comments', 'تعليقات')]}>
+                {shown.map((p) => <tr key={p.id}><td style={{ whiteSpace: 'normal', maxWidth: 560 }}>{p.title}</td><td>r/{p.subreddit}</td><td>{p.score}</td><td>{p.num_comments}</td></tr>)}
+              </Table>
+            </Card>
+          )}
+          {history.length > 0 && (
+            <div className="o-history">
+              <div className="o-between"><b><History size={14} /> {t('Saved explorations', 'استكشافات محفوظة')}</b><span className="o-muted" style={{ fontSize: 11 }}>{history.length}</span></div>
+              <div className="o-history-list">{history.slice(0, 8).map((r) => <button key={r.id} className={`o-history-item${r.id === runId ? ' active' : ''}`} onClick={() => openRun(r.id)}><b>{r.query}</b><small>{r.count} {t('posts', 'منشور')} · {new Date(r.saved_at).toLocaleString()}</small></button>)}</div>
+            </div>
+          )}
+        </>
+      )}
     </>
   );
 }

@@ -28,3 +28,22 @@ End users therefore need no Python, Node.js, npm, or manual Exa setup. Rebuild t
 
 ## Email and photo policy
 Only addresses a company publishes on its own profile or website are recorded, tagged by role and source page. Personal mailboxes are skipped. Profile photos are public LinkedIn images referenced by URL, never downloaded. See `AGENT_REACH_INTEGRATION.md`.
+
+## Bundled Agent Reach extensions
+The installer ships every extension that can be obtained through a package manager, so the doctor shows them as available on a clean machine:
+
+| Channel | Tool | How it ships |
+| --- | --- | --- |
+| YouTube | `yt-dlp` | inside `orbit-bridge.exe` (+ `tools/bin/yt-dlp.cmd` shim) |
+| Twitter/X | `twitter` (twitter-cli) | inside the sidecar + shim |
+| Reddit (Agent Reach channel) | `rdt` (rdt-cli) | inside the sidecar + shim |
+| Xiaohongshu | `xhs` (xhs-cli) | inside the sidecar + shim |
+| RSS | `feedparser` | inside the sidecar |
+| Podcasts / audio | `ffmpeg` | `resources/tools/node_modules/ffmpeg-static` + shim |
+| Facebook / Instagram / Reddit desktop | `opencli` | `resources/tools/node_modules/@jackwener/opencli` + shim (runs on the bundled Node) |
+| Web search | `mcporter` + Exa | `resources/mcporter` + bundled Node |
+
+Not bundled (no package-manager distribution): GitHub CLI `gh`, `deno`, `uvx`, `bili-cli`. The doctor lists them as optional with install hints. Login-based channels still need the user's own session/cookies.
+
+## Social Media → Reddit
+`main.py reddit-stream <params.json>` uses Arctic Shift (`social.py`): subreddit discovery, paced post search per subreddit with a date window, comments on the most discussed posts, monthly timeline, top subreddits and terms. The app then asks the configured LLM for a market report (established vs emerging markets, opportunities, opinions, pain points).
