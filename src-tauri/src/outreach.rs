@@ -185,7 +185,9 @@ pub fn draft(thread_id: String, step: u32, instructions: Option<String>) -> Resu
   let lead = t.lead.clone().unwrap_or(serde_json::json!({}));
   let pick = |k: &str| lead.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
   let history: Vec<String> = t.messages.iter().map(|m| format!("[{} {}] {}\n{}", m.direction.to_uppercase(), m.at, m.subject, m.body)).collect();
-  let user = format!(
+  let ws = crate::workspace::load().profile;
+  let sender = format!("SENDER (the user, writing in first person)\nName: {}\nCompany: {}\nRole: {}\nWebsite: {}\nWhat they offer: {}\nTarget market: {}\nGoal of this outreach: {}\n\n", ws.name, ws.company, ws.role, ws.website, ws.offer, ws.target_market, ws.goals);
+  let user = sender + &format!(
     "Write step {step} of a {}-step sequence.\n\nRECIPIENT\nName: {}\nCompany: {}\nHeadline: {}\nIndustry: {}\nEmployees: {}\nLocation: {}\nNotes: {}\n\nTEMPLATE FOR THIS STEP (structure to follow; adapt wording to the style):\nSubject: {}\n{}\n\nPREVIOUS MESSAGES IN THIS THREAD:\n{}\n\nEXTRA INSTRUCTIONS: {}",
     seq.steps.len(), t.name, t.company.clone().unwrap_or_default(), pick("headline"), pick("industry"), pick("employees"), pick("location"), pick("notes").chars().take(600).collect::<String>(),
     template.subject, template.body, if history.is_empty() { "(none)".into() } else { history.join("\n\n") }, instructions.unwrap_or_default()

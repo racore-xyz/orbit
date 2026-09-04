@@ -604,6 +604,29 @@ a { color: inherit; text-decoration: none; }
 .o-llm p, .o-llm small { font-size: 11px; color: var(--muted); display: block; }
 .o-llm small a { color: var(--primary); }
 .o-llm-key { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* workspace: checklist, tutorial, onboarding connect, danger zone */
+.o-check { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 6px; border-bottom: 1px solid var(--line); font-size: 13px; text-align: start; color: var(--text-2); }
+.o-check:last-child { border-bottom: 0; }
+.o-check:hover { background: var(--surface-2); }
+.o-check i { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--line-strong); display: grid; place-items: center; font-style: normal; font-size: 11px; flex-shrink: 0; }
+.o-check.done { color: var(--muted); text-decoration: line-through; }
+.o-check.done i { background: var(--green); border-color: var(--green); color: #fff; }
+.o-check span { flex: 1; }
+.o-check svg { color: var(--muted-2); }
+.o-tutorial { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.o-tutorial-step { display: flex; gap: 12px; align-items: flex-start; background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; }
+.o-tutorial-step i { width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; font-style: normal; font-weight: 700; font-size: 12px; display: grid; place-items: center; flex-shrink: 0; }
+.o-tutorial-step b { font-size: 13px; display: block; }
+.o-tutorial-step p { font-size: 12px; color: var(--text-2); margin-top: 2px; line-height: 1.5; }
+.o-tutorial-step a.o-btn { display: inline-flex; }
+.o-onb-connect { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.o-onb-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
+.o-onb-card > .o-flex b { font-size: 14px; }
+.o-danger { margin-top: 16px; padding: 14px; border: 1px solid color-mix(in srgb, var(--coral) 45%, var(--line)); background: var(--coral-soft); border-radius: var(--radius-sm); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.o-danger > div { flex: 1; min-width: 240px; }
+.o-danger b { display: block; font-size: 13px; color: var(--coral); }
+.o-danger small { font-size: 11px; color: var(--text-2); }
+@media (max-width: 800px) { .o-onb-connect { grid-template-columns: 1fr; } }
 .o-pre { margin: 12px 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface-2); font: 11px/1.5 var(--font-mono); color: var(--muted); }
 
 /* Module hero */

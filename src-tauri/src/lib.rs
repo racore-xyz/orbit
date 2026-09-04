@@ -1,6 +1,7 @@
 mod integrations;
 mod llm;
 mod outreach;
+mod workspace;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -225,6 +226,11 @@ fn run_save(run: serde_json::Value) -> Result<String, String> {
   Ok(id)
 }
 
+pub fn run_list_values() -> Vec<serde_json::Value> {
+  run_list().ok().and_then(|v| v.as_array().cloned()).unwrap_or_default()
+}
+pub fn run_get_value(id: &str) -> Option<serde_json::Value> { run_get(id.to_string()).ok() }
+
 /// List saved runs (metadata only, newest first).
 #[tauri::command]
 fn run_list() -> Result<serde_json::Value, String> {
@@ -293,6 +299,18 @@ async fn imap_save(host: String, port: u16, username: String, password: String) 
 #[tauri::command]
 async fn imap_disconnect() -> Result<(), String> { blocking!(integrations::imap_disconnect()) }
 
+// ---------------------------------------------------------------- Workspace
+#[tauri::command]
+async fn workspace_get() -> Result<serde_json::Value, String> { Ok(blocking!(workspace::summary())) }
+#[tauri::command]
+async fn workspace_save(workspace: workspace::Workspace) -> Result<workspace::Workspace, String> { blocking!(workspace::save(workspace)) }
+#[tauri::command]
+async fn workspace_log(kind: String, text: String) -> Result<(), String> { blocking!(workspace::log(kind, text)) }
+#[tauri::command]
+async fn workspace_delete(what: String) -> Result<String, String> { blocking!(workspace::delete(what)) }
+#[tauri::command]
+async fn workspace_export() -> Result<String, String> { blocking!(workspace::export()) }
+
 #[tauri::command]
 fn provider_env_status() -> serde_json::Value {
   let keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"];
@@ -303,7 +321,7 @@ fn provider_env_status() -> serde_json::Value {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

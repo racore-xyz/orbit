@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { siAnthropic, siGooglegemini, siMistralai, siOpenrouter } from 'simple-icons';
-import { Activity, BarChart3, Bot, Check, Compass, Copy, Download, ExternalLink, History, Inbox, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
+import { Activity, BarChart3, Bot, Check, ChevronRight, Compass, Copy, Download, ExternalLink, History, Inbox, KeyRound, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
 import {
   AppShell,
   Btn,
@@ -11,13 +11,17 @@ import {
   Chip,
   EmptyState,
   IconTile,
-  Insight,
   LangToggle,
+  Brand,
   ModuleHero,
   PageHead,
+  Progress,
+  Row,
   StatCard,
   Switch,
   Table,
+  Tile,
+  ViewAll,
   ThemeToggle,
   useTheme,
   type Icon,
@@ -31,6 +35,11 @@ type T = (en: string, ar: string) => string;
 export default function DesktopApp() {
   const { dark, toggleDark, lang, toggleLang, rtl, t } = useTheme();
   const [tab, setTab] = useState(0);
+  const [ws, setWs] = useState<WsSummary | null>(null);
+  const reloadWs = async () => { try { setWs(await invoke<WsSummary>('workspace_get')); } catch { /* first run */ } };
+  /* oxlint-disable react/react-compiler -- load the workspace once; refresh when the tab changes */
+  useEffect(() => { void reloadWs(); }, [tab]);
+  /* oxlint-enable react/react-compiler */
   const [openRun, setOpenRun] = useState<string | null>(null);
   const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? 5 : 1); };
   const [outreachSeed, setOutreachSeed] = useState<Lead[] | null>(null);
@@ -57,16 +66,17 @@ export default function DesktopApp() {
   ];
 
   return (
+    <>
     <AppShell
       dark={dark}
       rtl={rtl}
       groups={groups}
       active={tab}
       onNavigate={setTab}
-      workspace={t('My workspace', 'مساحة عملي')}
-      workspaceSub={t('Growth team', 'فريق النمو')}
-      user={t('Workspace owner', 'مالك المساحة')}
-      userSub={t('Desktop', 'سطح المكتب')}
+      workspace={ws?.workspace.profile.company || t('My workspace', 'مساحة عملي')}
+      workspaceSub={ws ? `${ws.progress.percent}% ${t('set up', 'مكتمل')} · ${ws.workspace.id}` : t('Growth team', 'فريق النمو')}
+      user={ws?.workspace.profile.name || t('Workspace owner', 'مالك المساحة')}
+      userSub={ws?.workspace.profile.role || t('Desktop', 'سطح المكتب')}
       status={{ title: t('Agentic mode ready', 'الوضع الوكيلي جاهز'), sub: t('Approval required for external actions', 'الإجراءات الخارجية تتطلب موافقة') }}
       crumbRoot={t('Workspace', 'مساحة العمل')}
       searchPlaceholder={t('Search workspace...', 'ابحث في مساحة العمل...')}
@@ -79,7 +89,7 @@ export default function DesktopApp() {
       aiLabel={t('Get AI Insight', 'رؤية ذكية')}
       onAi={() => setTab(6)}
     >
-      {tab === 0 && <Dashboard t={t} go={setTab} />}
+      {tab === 0 && <Dashboard t={t} go={setTab} ws={ws} />}
       {tab === 1 && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
       {tab === 2 && <Module t={t} title={t('CRM', 'إدارة العملاء')} icon={Users} action={t('Add contact', 'إضافة جهة اتصال')} />}
       {tab === 3 && <Module t={t} title={t('Campaigns', 'الحملات')} icon={Send} action={t('Create campaign', 'إنشاء حملة')} />}
@@ -88,47 +98,58 @@ export default function DesktopApp() {
       {tab === 6 && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
       {tab === 7 && <Integrations t={t} connected={connected} setConnected={setConnected} />}
       {tab === 8 && <HistoryPage t={t} onOpen={openSavedRun} />}
-      {tab === 9 && <Module t={t} title={t('Settings', 'الإعدادات')} icon={Settings2} action={t('Save', 'حفظ')} />}
+      {tab === 9 && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
     </AppShell>
+      {ws && !ws.workspace.onboarding.completed && <Onboarding t={t} ws={ws} done={reloadWs} />}
+    </>
   );
 }
 
-function Dashboard({ t, go }: { t: T; go: (i: number) => void }) {
+function Dashboard({ t, go, ws }: { t: T; go: (i: number) => void; ws: WsSummary | null }) {
+  const p = ws?.progress;
+  const name = ws?.workspace.profile.name?.split(' ')[0];
+  const goFor: Record<string, number> = { profile: 9, email: 7, inbox: 7, llm: 6, style: 4, leads: 1, research: 5, outreach: 4, reply: 4 };
   return (
     <>
       <PageHead
-        title={t('Welcome back!', 'مرحباً بعودتك!')}
+        title={name ? t(`Welcome back, ${name}!`, `مرحباً بعودتك، ${name}!`) : t('Welcome back!', 'مرحباً بعودتك!')}
         spark={false}
-        sub={t("Here's what's happening in your workspace today.", 'إليك ما يحدث في مساحة عملك اليوم.')}
+        sub={ws ? t(`${ws.workspace.profile.company || 'Your workspace'} · ${p?.percent}% set up · ${p?.leads_total.toLocaleString()} leads · ${p?.sent} emails sent`, `${ws.workspace.profile.company || 'مساحتك'} · ${p?.percent}% مكتمل · ${p?.leads_total.toLocaleString()} عميل · ${p?.sent} رسالة مرسلة`) : t("Here's what's happening in your workspace today.", 'إليك ما يحدث في مساحة عملك اليوم.')}
         actions={
           <>
-            <Btn variant="secondary" onClick={() => go(3)}>{t('New Campaign', 'حملة جديدة')}</Btn>
-            <Btn icon={Zap} onClick={() => go(4)}>{t('Open Outreach', 'فتح التواصل')}</Btn>
+            <Btn variant="secondary" onClick={() => go(1)}>{t('Find leads', 'ابحث عن عملاء')}</Btn>
+            <Btn icon={MessageSquare} onClick={() => go(4)}>{t('Open Outreach', 'فتح التواصل')}</Btn>
           </>
         }
       />
       <div className="o-grid o-grid-4">
-        <StatCard icon={Send} label={t('Total Campaigns', 'إجمالي الحملات')} value="0" trend={null} />
-        <StatCard icon={Users} label={t('Active Contacts', 'جهات الاتصال النشطة')} value="0" trend={null} />
-        <StatCard icon={Activity} label={t('Avg. Open Rate', 'متوسط معدل الفتح')} value="—" trend={null} />
-        <StatCard icon={Zap} label={t('Pipeline (MTD)', 'خط الأنابيب (الشهر)')} value="$0" trend={null} />
+        <StatCard icon={Users} label={t('Leads collected', 'العملاء المجمّعون')} value={(p?.leads_total || 0).toLocaleString()} trend={null} tone="violet" />
+        <StatCard icon={Compass} label={t('Research runs', 'عمليات بحث')} value={String(p?.runs || 0)} trend={null} tone="sky" />
+        <StatCard icon={Send} label={t('Emails sent', 'رسائل مرسلة')} value={String(p?.sent || 0)} trend={null} tone="orange" />
+        <StatCard icon={MessageSquare} label={t('Replies', 'ردود')} value={String(p?.replied || 0)} trend={null} tone="green" />
       </div>
       <div className="o-grid o-grid-main">
         <Card>
-          <CardHead title={t('Campaign Performance', 'أداء الحملات')} sub={t('Last 30 days overview', 'نظرة على آخر ٣٠ يوماً')} />
-          <EmptyState icon={BarChart3} title={t('No activity yet', 'لا يوجد نشاط بعد')} text={t('Connect a provider or run Market Research to create your first real records.', 'اربط مزوّداً أو شغّل أبحاث السوق لإنشاء أول سجلات حقيقية.')} action={<Btn variant="secondary" size="sm" onClick={() => go(5)}>{t('Run research', 'تشغيل البحث')}</Btn>} />
-        </Card>
-        <Card>
-          <CardHead title={t('Campaign Types', 'أنواع الحملات')} sub={t('Distribution', 'التوزيع')} />
-          <EmptyState icon={Compass} title={t('Nothing to distribute', 'لا يوجد ما يُوزّع')} text={t('Types appear after your first campaign.', 'تظهر الأنواع بعد حملتك الأولى.')} />
-        </Card>
-        <Card>
-          <CardHead title={t('AI Insights', 'رؤى الذكاء الاصطناعي')} />
-          <Insight icon={Sparkles} title={t('Best Send Time', 'أفضل وقت للإرسال')} text={t('Available after your first 100 sends.', 'متاح بعد أول ١٠٠ إرسال.')} />
-          <Insight icon={Mail} title={t('Subject Line Tip', 'نصيحة عنوان الرسالة')} text={t('Connect a mailbox to unlock suggestions.', 'اربط صندوق بريد لتفعيل الاقتراحات.')} />
+          <CardHead title={t('Getting started', 'البدء')} sub={t('Your workspace progress. Everything here is saved on this machine.', 'تقدم مساحة عملك. كل شيء هنا محفوظ على هذا الجهاز.')} action={<Chip tone={p && p.percent === 100 ? 'green' : 'violet'} pill>{p?.percent ?? 0}%</Chip>} />
+          <Progress value={p?.percent ?? 0} />
           <div className="o-mt">
-            <Btn variant="ai" icon={Sparkles} block onClick={() => go(6)}>{t('Open AI Assistant', 'فتح المساعد الذكي')}</Btn>
+            {(p?.checklist || []).map((c) => (
+              <button key={c.id} className={`o-check${c.done ? ' done' : ''}`} onClick={() => go(goFor[c.id] ?? 0)}>
+                <i>{c.done ? '✓' : ''}</i><span>{c.label}</span><ChevronRight size={14} />
+              </button>
+            ))}
           </div>
+        </Card>
+        <Card>
+          <CardHead title={t('Outreach pipeline', 'خط التواصل')} sub={t('Live from your conversations', 'مباشر من محادثاتك')} action={<ViewAll label={t('Open', 'فتح')} onClick={() => go(4)} />} />
+          <Tile title={t('Contacts', 'جهات الاتصال')} big={String(p?.contacts || 0)} left={t(`${p?.drafts || 0} drafts`, `${p?.drafts || 0} مسودة`)} right={t(`${p?.sent || 0} sent`, `${p?.sent || 0} مُرسل`)} progress={p?.contacts ? ((p.sent || 0) / p.contacts) * 100 : 0} />
+          <Tile title={t('Follow-ups', 'المتابعات')} big={String(p?.followups || 0)} left={t(`${p?.replied || 0} replied`, `${p?.replied || 0} ردّوا`)} right={p?.style_learned ? t('style learned', 'الأسلوب مُتعلَّم') : t('style not learned', 'الأسلوب غير مُتعلَّم')} progress={p?.sent ? ((p.replied || 0) / p.sent) * 100 : 0} />
+        </Card>
+        <Card>
+          <CardHead title={t('Recent activity', 'النشاط الأخير')} action={<ViewAll label={t('All', 'الكل')} onClick={() => go(9)} />} />
+          {ws?.workspace.activity.length ? ws.workspace.activity.slice(-6).reverse().map((x, i) => (
+            <Row key={i} icon={x.kind === 'outreach' ? Send : x.kind === 'research' ? Compass : x.kind === 'integration' ? Plug : Activity} title={x.text} meta={new Date(x.at).toLocaleString()} />
+          )) : <EmptyState icon={Activity} title={t('No activity yet', 'لا يوجد نشاط بعد')} text={t('Runs, sends, replies and connections show up here.', 'عمليات البحث والإرسال والردود والاتصالات تظهر هنا.')} />}
         </Card>
       </div>
     </>
@@ -263,7 +284,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
 
   const act = async (key: string, fn: () => Promise<string>) => {
     setBusy(key); setMsg(null);
-    try { setMsg({ tone: 'green', text: await fn() }); await refresh(); }
+    try { const r = await fn(); setMsg({ tone: 'green', text: r }); void invoke('workspace_log', { kind: 'integration', text: r }); await refresh(); }
     catch (e) { setMsg({ tone: 'coral', text: String(e) }); }
     finally { setBusy(''); }
   };
@@ -295,7 +316,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
 
             {open === c.id && c.id === 'gmail' && (
               <div className="o-int-form">
-                <p className="o-note" style={{ marginTop: 0 }}>{t('In your Google Account: Security → 2-Step Verification (turn on) → App passwords → create one for “Mail”. Paste the 16-character password here. orbit. connects with SMTP for sending and IMAP for reading replies. Nothing else is needed.', 'في حساب جوجل: Security → 2-Step Verification (فعّلها) → App passwords → أنشئ واحدة لـ “Mail”. الصق كلمة المرور المكوّنة من 16 حرفاً هنا. orbit. يتصل عبر SMTP للإرسال وIMAP لقراءة الردود. لا شيء آخر مطلوب.')}</p>
+                <GmailTutorial t={t} />
                 <div className="o-form-grid">
                   <label className="o-field">{t('Gmail address', 'عنوان Gmail')}<input value={g.address} onChange={(e) => setG({ ...g, address: e.target.value })} placeholder="you@gmail.com" /></label>
                   <label className="o-field">{t('App password', 'كلمة مرور التطبيق')}<input type="password" value={g.app_password} onChange={(e) => setG({ ...g, app_password: e.target.value })} placeholder={st?.smtp.host === 'smtp.gmail.com' && st?.smtp.connected ? t('(stored, leave blank to keep)', '(محفوظة، اتركها فارغة للإبقاء)') : 'xxxx xxxx xxxx xxxx'} /></label>
@@ -431,7 +452,7 @@ function LeadFinder({ t, mode = 'leads', openRunId, onOpened, onOutreach }: { t:
     } catch (e) { setError(String(e)); }
   };
   const saveRun = async (id: string, o: LeadsOut, extra: Record<string, unknown> = {}) => {
-    try { await invoke('run_save', { run: { id, mode, query: o.query, target: o.target, calls: o.calls, fetched_at: o.fetched_at, leads: o.leads, saved_at: new Date().toISOString(), ...extra } }); await loadHistory(); } catch (e) { setError(String(e)); }
+    try { await invoke('run_save', { run: { id, mode, query: o.query, target: o.target, calls: o.calls, fetched_at: o.fetched_at, leads: o.leads, saved_at: new Date().toISOString(), ...extra } }); await loadHistory(); if (!extra.enriched) void invoke('workspace_log', { kind: 'research', text: `${mode === 'research' ? 'Market Research' : 'Lead Finder'}: “${o.query}” → ${o.leads.length} records` }); } catch (e) { setError(String(e)); }
   };
   /* oxlint-disable react/react-compiler -- load saved runs once, and when a run is opened from the History tab */
   useEffect(() => { void loadHistory(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -854,6 +875,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
     await invoke<OThread>('outreach_send', { threadId: x.id, subject, body, step });
     setSubject(''); setBody(''); setDraftRef('');
     await load();
+    void invoke('workspace_log', { kind: 'outreach', text: `Sent step ${step} to ${x.name} <${x.email}>` });
     return t(`Sent to ${x.email} (step ${step})`, `تم الإرسال إلى ${x.email} (الخطوة ${step})`);
   });
   const sendDue = () => act('due', async () => {
@@ -869,8 +891,8 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
     await load();
     return t(`${n} follow-ups sent`, `تم إرسال ${n} متابعة`);
   });
-  const sync = () => act('sync', async () => { const r = await invoke<{ found: number; errors: string[] }>('outreach_sync'); await load(); return t(`${r.found} new replies${r.errors.length ? ` · ${r.errors[0]}` : ''}`, `${r.found} رد جديد${r.errors.length ? ` · ${r.errors[0]}` : ''}`); });
-  const learn = () => act('learn', async () => { const s = await invoke<OState>('outreach_learn_style', { samples: samples.filter((x) => x.trim()), signature, language: lang }); setSt(s); return t('Style learned. New drafts will follow it.', 'تم تعلّم الأسلوب. المسودات الجديدة ستتبعه.'); });
+  const sync = () => act('sync', async () => { const r = await invoke<{ found: number; errors: string[] }>('outreach_sync'); await load(); if (r.found) void invoke('workspace_log', { kind: 'outreach', text: `${r.found} new replies synced from inbox` }); return t(`${r.found} new replies${r.errors.length ? ` · ${r.errors[0]}` : ''}`, `${r.found} رد جديد${r.errors.length ? ` · ${r.errors[0]}` : ''}`); });
+  const learn = () => act('learn', async () => { const s = await invoke<OState>('outreach_learn_style', { samples: samples.filter((x) => x.trim()), signature, language: lang }); setSt(s); void invoke('workspace_log', { kind: 'style', text: 'Writing style learned from samples' }); return t('Style learned. New drafts will follow it.', 'تم تعلّم الأسلوب. المسودات الجديدة ستتبعه.'); });
   const update = (patch: Partial<OThread>) => { if (!st || !thread) return; void persist({ ...st, threads: st.threads.map((x) => (x.id === thread.id ? { ...x, ...patch } : x)) }); };
   const setSettings = (patch: Partial<OState['settings']>) => { if (!st) return; void persist({ ...st, settings: { ...st.settings, ...patch } }); };
   const removeThread = (id: string) => { if (!st) return; void persist({ ...st, threads: st.threads.filter((x) => x.id !== id) }); if (sel === id) setSel(null); };
@@ -1037,6 +1059,249 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
         </section>
       </div>
       {panel === 'lead' && thread?.lead && <LeadCard t={t} lead={thread.lead} onClose={() => setPanel('none')} />}
+    </>
+  );
+}
+
+type WsProfile = { name: string; company: string; role: string; website: string; email: string; industry: string; target_market: string; persona: string; offer: string; goals: string; language: string };
+type WsSummary = {
+  workspace: { id: string; created_at: string; updated_at: string; profile: WsProfile; onboarding: { completed: boolean; step: number; completed_at?: string | null; skipped_connect: boolean }; activity: { at: string; kind: string; text: string }[]; notes: string };
+  progress: { percent: number; checklist: { id: string; label: string; done: boolean }[]; runs: number; lead_runs: number; research_runs: number; leads_total: number; contacts: number; sent: number; followups: number; replied: number; drafts: number; style_learned: boolean; style_edits: number; smtp: boolean; imap: boolean; llm: boolean; webhook: boolean };
+  storage: { dir: string; files: { name: string; exists: boolean; size: number }[] };
+};
+
+/** Step-by-step Gmail app password guide with direct links. */
+function GmailTutorial({ t }: { t: T }) {
+  const steps = [
+    { title: t('Turn on 2-Step Verification', 'فعّل التحقق بخطوتين'), text: t('App passwords only exist on accounts with 2-Step Verification. Google Account → Security → 2-Step Verification → Turn on.', 'كلمات مرور التطبيقات متاحة فقط للحسابات المفعّل فيها التحقق بخطوتين. حساب جوجل → الأمان → التحقق بخطوتين → تفعيل.'), link: 'https://myaccount.google.com/signinoptions/two-step-verification', cta: t('Open 2-Step Verification', 'فتح التحقق بخطوتين') },
+    { title: t('Create an app password', 'أنشئ كلمة مرور تطبيق'), text: t('Open the App passwords page, type a name such as “orbit”, and click Create. Google shows a 16-character password once.', 'افتح صفحة App passwords، اكتب اسماً مثل “orbit”، واضغط Create. جوجل تعرض كلمة مرور من 16 حرفاً مرة واحدة.'), link: 'https://myaccount.google.com/apppasswords', cta: t('Open App passwords', 'فتح App passwords') },
+    { title: t('Paste it below', 'الصقها بالأسفل'), text: t('Spaces are fine, orbit. removes them. The password is stored only in Windows Credential Manager. orbit. then verifies SMTP (smtp.gmail.com:587) and IMAP (imap.gmail.com:993).', 'المسافات لا تهم، orbit. يزيلها. كلمة المرور تُحفظ فقط في Windows Credential Manager، ثم يتحقق orbit. من SMTP (smtp.gmail.com:587) وIMAP (imap.gmail.com:993).') },
+    { title: t('If Google says the option is unavailable', 'إذا قالت جوجل إن الخيار غير متاح'), text: t('Your Workspace admin has disabled app passwords, or 2-Step Verification is still off. Use the generic SMTP card with your provider instead.', 'مدير Workspace عطّل كلمات مرور التطبيقات، أو التحقق بخطوتين ما زال معطلاً. استخدم كارت SMTP العام مع مزوّدك.') },
+  ];
+  return (
+    <div className="o-tutorial">
+      {steps.map((s, i) => (
+        <div key={i} className="o-tutorial-step">
+          <i>{i + 1}</i>
+          <div>
+            <b>{s.title}</b>
+            <p>{s.text}</p>
+            {s.link && <a href={s.link} target="_blank" rel="noreferrer" className="o-btn o-btn-secondary o-btn-sm" style={{ marginTop: 6 }}><ExternalLink size={14} /> {s.cta}</a>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Real onboarding: profile → market → connections. Saved to the workspace on every step. */
+function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<void> }) {
+  const [step, setStep] = useState(Math.max(1, ws.workspace.onboarding.step || 1));
+  const [p, setP] = useState<WsProfile>({ ...ws.workspace.profile });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [gmail, setGmail] = useState({ address: '', app_password: '' });
+  const [gmailOk, setGmailOk] = useState(false);
+  const [llm, setLlm] = useState({ provider: 'openai', key: '' });
+  const [llmOk, setLlmOk] = useState(false);
+  const total = 3;
+  const persist = async (patch: Partial<WsSummary['workspace']['onboarding']> = {}) => {
+    const w = { ...ws.workspace, profile: p, onboarding: { ...ws.workspace.onboarding, step, ...patch } };
+    return invoke('workspace_save', { workspace: w });
+  };
+  const next = async () => {
+    setErr('');
+    if (step === 1 && (!p.name.trim() || !p.company.trim())) { setErr(t('Name and company are required.', 'الاسم والشركة مطلوبان.')); return; }
+    setBusy(true);
+    try { await persist({ step: step + 1 }); setStep(step + 1); } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+  const finish = async (skipped: boolean) => {
+    setBusy(true); setErr('');
+    try {
+      await persist({ completed: true, completed_at: new Date().toISOString(), skipped_connect: skipped, step: total });
+      await invoke('workspace_log', { kind: 'workspace', text: `Workspace created for ${p.company}` });
+      await done();
+    } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+  const connectGmail = async () => {
+    setBusy(true); setErr('');
+    try {
+      const pw = gmail.app_password.replace(/\s+/g, '');
+      await invoke('smtp_save', { host: 'smtp.gmail.com', port: 587, username: gmail.address, password: pw, from: gmail.address, security: 'starttls' });
+      await invoke('imap_save', { host: 'imap.gmail.com', port: 993, username: gmail.address, password: pw });
+      setGmailOk(true); void invoke('workspace_log', { kind: 'integration', text: `Gmail connected as ${gmail.address}` });
+    } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+  const saveLlm = async () => {
+    setBusy(true); setErr('');
+    try { await invoke('llm_set_key', { provider: llm.provider, key: llm.key }); await invoke('llm_set_default', { provider: llm.provider, model: '' }); setLlmOk(true); void invoke('workspace_log', { kind: 'integration', text: `${llm.provider} API key saved` }); }
+    catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+  const field = (k: keyof WsProfile, label: string, ph = '', full = false, area = false) => (
+    <label className={`o-field${full ? ' full' : ''}`} key={k}>{label}{area ? <textarea rows={3} value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} placeholder={ph} /> : <input value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} placeholder={ph} />}</label>
+  );
+  return (
+    <div className="o-backdrop">
+      <div className="o-modal" style={{ width: 'min(760px, 100%)' }}>
+        <div className="o-banner">
+          <Brand size="sm" />
+          <Sparkles size={18} className="o-spark" />
+          <i className="o-planet" />
+          <span className="o-banner-copy">{t('Discover, engage, learn, repeat.', 'اكتشف، تواصل، تعلّم، كرّر.')}</span>
+        </div>
+        <div className="o-modal-top">
+          <span className="o-eyebrow" style={{ margin: 0 }}>{t('Workspace setup', 'إعداد مساحة العمل')} · {ws.workspace.id}</span>
+          <span>{step} / {total}</span>
+        </div>
+        <div className="o-progress" style={{ marginBottom: 22 }}><i style={{ width: `${(step / total) * 100}%` }} /></div>
+        {err && <div className="o-result error" style={{ marginBottom: 14 }}>{err}</div>}
+
+        {step === 1 && (
+          <>
+            <h2>{t('Who are you?', 'من أنت؟')}</h2>
+            <p className="o-sub">{t('This is your identity in orbit. It signs your outreach and shapes every draft.', 'هذه هويتك في orbit. تُوقّع رسائلك وتشكّل كل مسودة.')}</p>
+            <div className="o-form-grid">
+              {field('name', t('Your name', 'اسمك'), 'Ahmed Mohamed')}
+              {field('company', t('Company / workspace', 'الشركة / مساحة العمل'), 'Acme')}
+              {field('role', t('Role', 'الدور'), t('Founder, Growth lead…', 'مؤسس، مسؤول نمو…'))}
+              {field('website', t('Website', 'الموقع'), 'https://acme.com')}
+              {field('email', t('Work email', 'بريد العمل'), 'you@company.com')}
+              <label className="o-field">{t('Language for drafts', 'لغة المسودات')}<select value={p.language} onChange={(e) => setP({ ...p, language: e.target.value })}><option value="en">English</option><option value="ar">العربية</option></select></label>
+            </div>
+          </>
+        )}
+        {step === 2 && (
+          <>
+            <h2>{t('Who do you sell to?', 'لمن تبيع؟')}</h2>
+            <p className="o-sub">{t('Lead Finder and Market Research use this as the default query, and the model uses it to write relevant emails.', 'البحث عن العملاء وأبحاث السوق يستخدمانها كاستعلام افتراضي، والنموذج يستخدمها لكتابة رسائل ذات صلة.')}</p>
+            <div className="o-form-grid">
+              {field('industry', t('Your industry', 'مجالك'), 'SaaS, Fintech, Agency…')}
+              {field('target_market', t('Target market', 'السوق المستهدف'), t('e.g. Startups in Saudi Arabia and Egypt', 'مثال: الشركات الناشئة في السعودية ومصر'))}
+              {field('persona', t('Ideal customer persona', 'شخصية العميل المثالي'), t('e.g. Solo founders of B2B SaaS, 1–20 employees', 'مثال: مؤسسون منفردون لـ B2B SaaS، 1–20 موظف'), true)}
+              {field('offer', t('What you offer (one paragraph)', 'ماذا تقدم (فقرة واحدة)'), t('The value proposition the model should communicate', 'القيمة التي يجب أن يوصلها النموذج'), true, true)}
+              {field('goals', t('Goal of outreach', 'هدف التواصل'), t('e.g. Book 10 discovery calls this month', 'مثال: حجز 10 مكالمات استكشاف هذا الشهر'), true)}
+            </div>
+          </>
+        )}
+        {step === 3 && (
+          <>
+            <h2>{t('Connect your tools', 'اربط أدواتك')}</h2>
+            <p className="o-sub">{t('Optional now, needed before sending. Both can be done later under Integrations.', 'اختياري الآن، ومطلوب قبل الإرسال. يمكن فعل الاثنين لاحقاً من التكاملات.')}</p>
+            <div className="o-onb-connect">
+              <div className="o-onb-card">
+                <div className="o-flex"><IconTile icon={Mail} tone={gmailOk ? 'green' : 'violet'} /><b>Gmail</b>{gmailOk && <Chip tone="green">{t('Connected', 'متصل')}</Chip>}</div>
+                <GmailTutorial t={t} />
+                <div className="o-form-grid" style={{ marginTop: 10 }}>
+                  <label className="o-field">{t('Gmail address', 'عنوان Gmail')}<input value={gmail.address} onChange={(e) => setGmail({ ...gmail, address: e.target.value })} placeholder="you@gmail.com" /></label>
+                  <label className="o-field">{t('App password', 'كلمة مرور التطبيق')}<input type="password" value={gmail.app_password} onChange={(e) => setGmail({ ...gmail, app_password: e.target.value })} placeholder="xxxx xxxx xxxx xxxx" /></label>
+                </div>
+                <Btn size="sm" onClick={connectGmail} disabled={busy || !gmail.address || !gmail.app_password}>{t('Connect Gmail (SMTP + IMAP)', 'ربط Gmail (SMTP + IMAP)')}</Btn>
+              </div>
+              <div className="o-onb-card">
+                <div className="o-flex"><IconTile icon={KeyRound} tone={llmOk ? 'green' : 'violet'} /><b>{t('LLM API key', 'مفتاح نموذج اللغة')}</b>{llmOk && <Chip tone="green">{t('Saved', 'محفوظ')}</Chip>}</div>
+                <p className="o-note" style={{ marginTop: 6 }}>{t('Drafts emails in your style. Stored in Windows Credential Manager.', 'يصيغ الرسائل بأسلوبك. يُحفظ في Windows Credential Manager.')}</p>
+                <div className="o-form-grid" style={{ marginTop: 10 }}>
+                  <label className="o-field">{t('Provider', 'المزوّد')}<select value={llm.provider} onChange={(e) => setLlm({ ...llm, provider: e.target.value })}><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="google">Google Gemini</option><option value="mistral">Mistral</option><option value="groq">Groq</option><option value="openrouter">OpenRouter</option></select></label>
+                  <label className="o-field">API key<input type="password" value={llm.key} onChange={(e) => setLlm({ ...llm, key: e.target.value })} /></label>
+                </div>
+                <Btn size="sm" onClick={saveLlm} disabled={busy || !llm.key}>{t('Save key', 'حفظ المفتاح')}</Btn>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="o-between" style={{ marginTop: 22 }}>
+          {step > 1 ? <Btn variant="ghost" onClick={() => setStep(step - 1)} disabled={busy}>{t('Back', 'رجوع')}</Btn> : <span />}
+          <div className="o-flex">
+            {step === 3 && <Btn variant="secondary" onClick={() => finish(true)} disabled={busy}>{t('Skip for now', 'تخطٍّ الآن')}</Btn>}
+            {step < 3 ? <Btn onClick={next} disabled={busy}>{t('Continue', 'متابعة')} <ChevronRight size={16} /></Btn> : <Btn onClick={() => finish(false)} disabled={busy}>{t('Open my workspace', 'افتح مساحة عملي')} <ChevronRight size={16} /></Btn>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Settings → Workspace: editable profile, progress, activity, and data management. */
+function WorkspacePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () => Promise<void> }) {
+  const [p, setP] = useState<WsProfile | null>(ws?.workspace.profile || null);
+  const [notes, setNotes] = useState(ws?.workspace.notes || '');
+  const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const [busy, setBusy] = useState('');
+  const [confirm, setConfirm] = useState('');
+  /* oxlint-disable react/react-compiler -- mirror the loaded workspace into the editable form */
+  useEffect(() => { if (ws) { setP(ws.workspace.profile); setNotes(ws.workspace.notes || ''); } }, [ws?.workspace.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  if (!ws || !p) return <EmptyState icon={Settings2} title={t('Loading workspace…', 'جاري تحميل مساحة العمل…')} text="" />;
+  const act = async (k: string, fn: () => Promise<string>) => { setBusy(k); setMsg(null); try { setMsg({ tone: 'green', text: await fn() }); await reload(); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const save = () => act('save', async () => { await invoke('workspace_save', { workspace: { ...ws.workspace, profile: p, notes } }); return t('Workspace saved', 'تم حفظ مساحة العمل'); });
+  const del = (what: string, label: string) => act(what, async () => { const r = await invoke<string>('workspace_delete', { what }); return `${label}: ${r}`; });
+  const field = (k: keyof WsProfile, label: string, area = false) => (
+    <label className={`o-field${area ? ' full' : ''}`} key={k}>{label}{area ? <textarea rows={3} value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} /> : <input value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} />}</label>
+  );
+  const datasets: { id: string; label: string; detail: string; count: number | string }[] = [
+    { id: 'runs', label: t('Research history', 'سجل البحث'), detail: t('Lead Finder and Market Research runs with all records', 'عمليات البحث عن العملاء وأبحاث السوق بكل السجلات'), count: `${ws.progress.runs} ${t('runs', 'عملية')} · ${ws.progress.leads_total.toLocaleString()} ${t('leads', 'عميل')}` },
+    { id: 'outreach', label: t('Outreach conversations', 'محادثات التواصل'), detail: t('Contacts, messages, follow-up state', 'جهات الاتصال والرسائل وحالة المتابعة'), count: `${ws.progress.contacts} ${t('contacts', 'جهة')} · ${ws.progress.sent} ${t('sent', 'مُرسل')}` },
+    { id: 'style', label: t('Writing style', 'أسلوب الكتابة'), detail: t('Samples, learned guide, signature, learned edits', 'العينات ودليل الأسلوب والتوقيع والتعديلات المُتعلَّمة'), count: ws.progress.style_learned ? `${t('learned', 'مُتعلَّم')} · ${ws.progress.style_edits} ${t('edits', 'تعديل')}` : t('not learned', 'غير مُتعلَّم') },
+    { id: 'sequences', label: t('Email sequences', 'تسلسلات الرسائل'), detail: t('Step templates and delays (resets to default)', 'قوالب الخطوات والتأخيرات (تعود للافتراضي)'), count: '' },
+    { id: 'llm', label: t('LLM API keys', 'مفاتيح النماذج'), detail: t('All provider keys in the credential store + default model', 'كل مفاتيح المزوّدين في مخزن الاعتماد + النموذج الافتراضي'), count: ws.progress.llm ? t('configured', 'مهيأ') : t('none', 'لا يوجد') },
+    { id: 'integrations', label: t('Email & webhook connections', 'اتصالات البريد والـ webhook'), detail: t('SMTP, IMAP, webhook settings and their passwords', 'إعدادات SMTP وIMAP والـ webhook وكلمات مرورها'), count: [ws.progress.smtp && 'SMTP', ws.progress.imap && 'IMAP', ws.progress.webhook && 'Webhook'].filter(Boolean).join(' · ') || t('none', 'لا يوجد') },
+    { id: 'activity', label: t('Activity log', 'سجل النشاط'), detail: t('Timeline of everything the workspace did', 'خط زمني لكل ما فعلته مساحة العمل'), count: `${ws.workspace.activity.length} ${t('events', 'حدث')}` },
+  ];
+  return (
+    <>
+      <PageHead eyebrow={`${t('Workspace', 'مساحة العمل')} · ${ws.workspace.id} · ${t('created', 'أُنشئت')} ${new Date(ws.workspace.created_at).toLocaleDateString()}`} title={t('Settings & workspace', 'الإعدادات ومساحة العمل')} spark={false} sub={t('Everything orbit. knows lives on this machine and is yours to edit, export or delete.', 'كل ما يعرفه orbit. موجود على هذا الجهاز وبإمكانك تعديله أو تصديره أو حذفه.')}
+        actions={<><Btn variant="secondary" size="sm" icon={Download} onClick={() => act('export', async () => t(`Exported to ${await invoke<string>('workspace_export')}`, `تم التصدير إلى ${await invoke<string>('workspace_export')}`))} disabled={!!busy}>{t('Export backup', 'تصدير نسخة')}</Btn><Btn size="sm" onClick={save} disabled={!!busy}>{busy === 'save' ? t('Saving…', 'جاري الحفظ…') : t('Save changes', 'حفظ التعديلات')}</Btn></>} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
+      <div className="o-grid o-grid-4">
+        <StatCard icon={Shield} label={t('Setup progress', 'تقدم الإعداد')} value={`${ws.progress.percent}%`} trend={null} tone="violet" />
+        <StatCard icon={Users} label={t('Leads', 'العملاء')} value={ws.progress.leads_total.toLocaleString()} trend={null} tone="sky" />
+        <StatCard icon={Send} label={t('Emails sent', 'رسائل مرسلة')} value={String(ws.progress.sent)} trend={null} tone="orange" />
+        <StatCard icon={MessageSquare} label={t('Replies', 'ردود')} value={String(ws.progress.replied)} trend={null} tone="green" />
+      </div>
+      <div className="o-grid o-grid-2">
+        <Card>
+          <CardHead title={t('Profile', 'الملف الشخصي')} sub={t('Used as the sender identity in every draft.', 'تُستخدم كهوية المرسل في كل مسودة.')} />
+          <div className="o-form-grid">
+            {field('name', t('Name', 'الاسم'))}{field('company', t('Company', 'الشركة'))}{field('role', t('Role', 'الدور'))}{field('website', t('Website', 'الموقع'))}{field('email', t('Work email', 'بريد العمل'))}
+            <label className="o-field">{t('Draft language', 'لغة المسودات')}<select value={p.language} onChange={(e) => setP({ ...p, language: e.target.value })}><option value="en">English</option><option value="ar">العربية</option></select></label>
+          </div>
+        </Card>
+        <Card>
+          <CardHead title={t('Market', 'السوق')} sub={t('Feeds Lead Finder defaults and the outreach prompt.', 'تغذي افتراضيات البحث عن العملاء وبرومبت التواصل.')} />
+          <div className="o-form-grid">
+            {field('industry', t('Industry', 'المجال'))}{field('target_market', t('Target market', 'السوق المستهدف'))}{field('persona', t('Ideal customer persona', 'شخصية العميل المثالي'), true)}{field('offer', t('Offer', 'العرض'), true)}{field('goals', t('Outreach goal', 'هدف التواصل'), true)}
+          </div>
+        </Card>
+      </div>
+      <div className="o-grid o-grid-2">
+        <Card>
+          <CardHead title={t('Workspace notes', 'ملاحظات مساحة العمل')} sub={t('Free text, Markdown supported.', 'نص حر، يدعم Markdown.')} />
+          <textarea className="o-input" rows={8} style={{ width: '100%', height: 'auto', padding: 10, fontFamily: 'var(--font-sans)' }} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          {notes && <div className="o-mt"><Md text={notes} /></div>}
+        </Card>
+        <Card>
+          <CardHead title={t('Activity', 'النشاط')} action={<Btn variant="ghost" size="sm" icon={Trash2} onClick={() => del('activity', t('Activity', 'النشاط'))} disabled={!!busy}>{t('Clear', 'مسح')}</Btn>} />
+          <div style={{ maxHeight: 320, overflow: 'auto' }}>
+            {ws.workspace.activity.length ? [...ws.workspace.activity].reverse().map((x, i) => <Row key={i} icon={x.kind === 'outreach' ? Send : x.kind === 'research' ? Compass : x.kind === 'integration' ? Plug : Activity} title={x.text} meta={`${x.kind} · ${new Date(x.at).toLocaleString()}`} />) : <EmptyState icon={Activity} title={t('No activity yet', 'لا يوجد نشاط بعد')} text="" />}
+          </div>
+        </Card>
+      </div>
+      <Card>
+        <CardHead title={t('Your data', 'بياناتك')} sub={`${t('Stored in', 'محفوظة في')} ${ws.storage.dir} · ${t('secrets in Windows Credential Manager', 'الأسرار في Windows Credential Manager')}`} />
+        {datasets.map((d) => (
+          <div key={d.id} className="o-row">
+            <IconTile icon={d.id === 'runs' ? History : d.id === 'outreach' ? MessageSquare : d.id === 'style' ? Sparkles : d.id === 'llm' ? KeyRound : d.id === 'integrations' ? Plug : d.id === 'sequences' ? Send : Activity} tone="violet" />
+            <div><b>{d.label}</b><small>{d.detail}{d.count ? ` · ${d.count}` : ''}</small></div>
+            <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => del(d.id, d.label)} disabled={!!busy}>{t('Delete', 'حذف')}</Btn>
+          </div>
+        ))}
+        <div className="o-danger">
+          <div><b>{t('Reset workspace', 'إعادة ضبط مساحة العمل')}</b><small>{t(`Deletes everything above including stored passwords and keys, then restarts onboarding. Type ${ws.workspace.profile.company || 'RESET'} to confirm.`, `يحذف كل ما سبق بما فيه كلمات المرور والمفاتيح ثم يعيد الإعداد. اكتب ${ws.workspace.profile.company || 'RESET'} للتأكيد.`)}</small></div>
+          <input className="o-input" style={{ height: 34, width: 200 }} value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder={ws.workspace.profile.company || 'RESET'} />
+          <Btn variant="secondary" size="sm" icon={Trash2} disabled={!!busy || confirm !== (ws.workspace.profile.company || 'RESET')} onClick={() => act('all', async () => { const r = await invoke<string>('workspace_delete', { what: 'all' }); setConfirm(''); return r; })}>{t('Reset everything', 'إعادة ضبط كل شيء')}</Btn>
+        </div>
+      </Card>
     </>
   );
 }
