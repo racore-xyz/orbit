@@ -1,8 +1,9 @@
 mod integrations;
+mod llm;
+mod outreach;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use tauri::Emitter;
@@ -13,102 +14,68 @@ fn jobs() -> &'static Mutex<HashMap<String, Child>> {
   JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// The research bridge ships inside the binary, so the app never depends on a
-/// file path at runtime. Source of truth: desktop/bridge/search.py
-const BRIDGE_SEARCH: &str = include_str!("../../desktop/bridge/search.py");
-const BRIDGE_LEADS: &str = include_str!("../../desktop/bridge/leads.py");
-
-fn bridge_source() -> String {
-  // search.py defines helpers + main(); leads.py adds find_leads/enrich/export; _entry() dispatches.
-  format!("{BRIDGE_SEARCH}\n{BRIDGE_LEADS}\n_entry()\n")
+/// Where the app's bundled tools live. In a packaged install everything sits next to the
+/// executable (`orbit-bridge.exe` sidecar, `resources/` folder). In development we fall back
+/// to the repo checkout via CARGO_MANIFEST_DIR.
+fn exe_dir() -> std::path::PathBuf {
+  std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| ".".into())
+}
+fn dev_root() -> std::path::PathBuf { std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")) }
+fn resource(rel: &str) -> Option<std::path::PathBuf> {
+  let candidates = [exe_dir().join("resources").join(rel), exe_dir().join(rel), dev_root().join("resources").join(rel)];
+  candidates.into_iter().find(|p| p.exists())
 }
 
-/// Materialize the concatenated bridge to a temp `.py` file and return its path.
-/// We run `python <file>` instead of `python -c <source>` because the source is
-/// ~32 KB and Windows caps a process command line at 32,767 chars — passing it
-/// inline overflows and fails with os error 206 ("filename or extension is too
-/// long"). The filename is content-addressed so it is stable across runs, shared
-/// by concurrent jobs, and regenerated whenever the bundled bridge changes.
-fn bridge_script() -> Result<PathBuf, String> {
-  let src = bridge_source();
-  let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a over the source bytes
-  for b in src.as_bytes() { h ^= *b as u64; h = h.wrapping_mul(0x0000_0100_0000_01b3); }
-  let dir = std::env::temp_dir().join("orbit-bridge");
-  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-  let path = dir.join(format!("bridge-{h:016x}.py"));
-  if !path.exists() {
-    // Write to a pid-unique temp then rename, so a concurrent job never executes
-    // a half-written file. A losing race just overwrites identical content.
-    let tmp = dir.join(format!("bridge-{h:016x}.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, &src).map_err(|e| e.to_string())?;
-    if std::fs::rename(&tmp, &path).is_err() { let _ = std::fs::remove_file(&tmp); }
+/// Build the bridge command: bundled sidecar first, system Python + source second.
+fn bridge_cmd() -> Result<Command, String> {
+  let sidecar = exe_dir().join("orbit-bridge.exe");
+  let mut cmd = if sidecar.exists() {
+    Command::new(sidecar)
+  } else {
+    let main_py = dev_root().parent().map(|r| r.join("desktop").join("bridge").join("main.py")).filter(|p| p.exists())
+      .ok_or("Bridge not found: neither orbit-bridge.exe next to the app nor desktop/bridge/main.py in the repo.")?;
+    let exe = std::env::var("ORBIT_PYTHON").unwrap_or_else(|_| "python".into());
+    let mut c = Command::new(exe);
+    c.arg(main_py);
+    c
+  };
+  // Bundled Node + mcporter (+ Exa config) so Agent Reach web search works out of the box.
+  if let (Some(node), Some(cli)) = (resource("node/node_modules/node/bin/node.exe"), resource("mcporter/node_modules/mcporter/dist/cli.js")) {
+    cmd.env("ORBIT_NODE", node);
+    cmd.env("ORBIT_MCPORTER_CLI", cli);
   }
-  Ok(path)
-}
-
-/// Resolve the Python interpreter once. Honors ORBIT_PYTHON, otherwise tries the
-/// Windows `py -3` launcher, `python`/`python3` on PATH, and common per-user
-/// install locations — picking the first that actually runs. Returns the program
-/// plus any leading args (e.g. `("py", ["-3"])`), so end-user machines that have
-/// Python but haven't added it to PATH still work without manual setup.
-fn python_cmd() -> &'static (String, Vec<String>) {
-  static RESOLVED: OnceLock<(String, Vec<String>)> = OnceLock::new();
-  RESOLVED.get_or_init(|| {
-    if let Ok(e) = std::env::var("ORBIT_PYTHON") {
-      if !e.trim().is_empty() { return (e, vec![]); }
-    }
-    let mut candidates: Vec<(String, Vec<String>)> = vec![
-      ("py".into(), vec!["-3".into()]),
-      ("python".into(), vec![]),
-      ("python3".into(), vec![]),
-    ];
-    #[cfg(windows)]
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-      for v in ["Python314", "Python313", "Python312"] {
-        candidates.push((format!("{local}\\Programs\\Python\\{v}\\python.exe"), vec![]));
-      }
-    }
-    for (prog, args) in &candidates {
-      let mut c = Command::new(prog);
-      c.args(args).arg("--version").stdout(Stdio::null()).stderr(Stdio::null());
-      #[cfg(windows)]
-      { use std::os::windows::process::CommandExt; c.creation_flags(0x0800_0000); }
-      if c.status().map(|s| s.success()).unwrap_or(false) { return (prog.clone(), args.clone()); }
-    }
-    ("python".into(), vec![]) // last resort; the spawn error will name the problem
-  })
-}
-
-fn python() -> Command {
-  let (exe, pre) = python_cmd();
-  let mut cmd = Command::new(exe);
-  cmd.args(pre);
-  // Make user-site scripts (pip --user) and common tool locations visible.
+  if let Some(cfg) = resource("mcporter.json") { cmd.env("MCPORTER_CONFIG", cfg); }
   let mut path = std::env::var("PATH").unwrap_or_default();
   if let Ok(appdata) = std::env::var("APPDATA") {
-    for v in ["Python314", "Python313", "Python312"] {
-      path = format!("{path};{appdata}\\Python\\{v}\\Scripts");
-    }
+    for v in ["Python314", "Python313", "Python312"] { path = format!("{path};{appdata}\\Python\\{v}\\Scripts"); }
     path = format!("{path};{appdata}\\npm");
   }
   cmd.env("PATH", path);
   cmd.env("PYTHONIOENCODING", "utf-8");
   cmd.env("PYTHONUTF8", "1");
   cmd.env("AGENT_REACH_LANG", "en");
-  cmd.env("ORBIT_BRIDGE_CONCAT", "1");
   #[cfg(windows)]
   {
     use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash behind the app
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
   }
-  cmd
+  Ok(cmd)
+}
+
+fn run_bridge(args: &[&str]) -> Result<String, String> {
+  let out = bridge_cmd()?.args(args).output().map_err(|e| format!("Could not start the research bridge: {e}"))?;
+  let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+  if out.status.success() && !stdout.is_empty() {
+    return Ok(stdout);
+  }
+  let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+  Err(if stderr.is_empty() { stdout } else { stderr.lines().last().unwrap_or(&stderr).to_string() })
 }
 
 /// Streams NDJSON lines from the bridge as Tauri events named `bridge://<job_id>`.
 /// Each event payload is the parsed line; a final `{"type":"done"|"error"|"cancelled"}` closes the job.
 fn stream_bridge(app: tauri::AppHandle, job_id: String, args: Vec<String>) -> Result<(), String> {
-  let script = bridge_script()?;
-  let mut child = python().arg(&script).args(&args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
+  let mut child = bridge_cmd()?.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
     .map_err(|e| format!("Python is not available on this machine: {e}. Install Python 3.12+ and make sure `python` is on PATH."))?;
   let stdout = child.stdout.take().ok_or("no stdout")?;
   let stderr = child.stderr.take();
@@ -159,17 +126,6 @@ fn bridge_enrich_stream(app: tauri::AppHandle, job_id: String, leads_json: Strin
 fn bridge_cancel(job_id: String) -> Result<bool, String> {
   let mut m = jobs().lock().map_err(|e| e.to_string())?;
   if let Some(mut child) = m.remove(&job_id) { let _ = child.kill(); Ok(true) } else { Ok(false) }
-}
-
-fn run_bridge(args: &[&str]) -> Result<String, String> {
-  let script = bridge_script()?;
-  let out = python().arg(&script).args(args).output().map_err(|e| format!("Python is not available on this machine: {e}. Install Python 3.12+ and make sure `python` is on PATH."))?;
-  let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-  if out.status.success() && !stdout.is_empty() {
-    return Ok(stdout);
-  }
-  let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-  Err(if stderr.is_empty() { stdout } else { stderr.lines().last().unwrap_or(&stderr).to_string() })
 }
 
 #[tauri::command]
@@ -223,8 +179,8 @@ fn bridge_enrich(leads_json: String, limit: Option<u32>) -> Result<String, Strin
 /// Raw Agent Reach doctor output (its messages are Chinese-only upstream; kept for debugging).
 #[tauri::command]
 fn agent_reach_doctor() -> Result<String, String> {
-  python()
-    .args(["-c", "from agent_reach.cli import main; main()", "doctor"])
+  let mut c = Command::new(std::env::var("ORBIT_PYTHON").unwrap_or_else(|_| "python".into()));
+  c.args(["-c", "from agent_reach.cli import main; main()", "doctor"])
     .output()
     .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
     .map_err(|e| format!("Agent Reach is not installed or unavailable: {e}"))
@@ -238,12 +194,6 @@ macro_rules! blocking {
 #[tauri::command]
 async fn integrations_status() -> Result<serde_json::Value, String> { Ok(blocking!(integrations::status())) }
 
-#[tauri::command]
-async fn gmail_connect(client_id: String, client_secret: String) -> Result<serde_json::Value, String> { blocking!(integrations::gmail_connect(client_id, client_secret)) }
-#[tauri::command]
-async fn gmail_send(to: String, subject: String, body: String) -> Result<serde_json::Value, String> { blocking!(integrations::gmail_send(to, subject, body)) }
-#[tauri::command]
-async fn gmail_disconnect() -> Result<(), String> { blocking!(integrations::gmail_disconnect()) }
 
 #[tauri::command]
 async fn smtp_save(host: String, port: u16, username: String, password: String, from: String, security: String) -> Result<serde_json::Value, String> { blocking!(integrations::smtp_save(host, port, username, password, from, security)) }
@@ -259,6 +209,90 @@ async fn webhook_send(event: String, payload: serde_json::Value) -> Result<serde
 #[tauri::command]
 async fn webhook_disconnect() -> Result<(), String> { blocking!(integrations::webhook_disconnect()) }
 
+// ---------------------------------------------------------------- research history (local JSON files)
+fn runs_dir() -> std::path::PathBuf {
+  let base = std::env::var("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+  base.join("orbit").join("runs")
+}
+
+/// Save (or overwrite) a research run. `run.id` is required; the file is `<id>.json`.
+#[tauri::command]
+fn run_save(run: serde_json::Value) -> Result<String, String> {
+  let id = run.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).ok_or("run.id missing or invalid")?.to_string();
+  let dir = runs_dir();
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  std::fs::write(dir.join(format!("{id}.json")), serde_json::to_vec(&run).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+  Ok(id)
+}
+
+/// List saved runs (metadata only, newest first).
+#[tauri::command]
+fn run_list() -> Result<serde_json::Value, String> {
+  let dir = runs_dir();
+  let mut items = Vec::new();
+  if let Ok(rd) = std::fs::read_dir(&dir) {
+    for e in rd.flatten() {
+      let p = e.path();
+      if p.extension().and_then(|x| x.to_str()) != Some("json") { continue; }
+      let Ok(text) = std::fs::read_to_string(&p) else { continue };
+      let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+      let count = v.get("leads").and_then(|l| l.as_array()).map(|a| a.len()).unwrap_or(0);
+      items.push(serde_json::json!({
+        "id": v.get("id"), "mode": v.get("mode"), "query": v.get("query"), "target": v.get("target"),
+        "count": count, "fetched_at": v.get("fetched_at"), "saved_at": v.get("saved_at"), "enriched": v.get("enriched"),
+        "export": v.get("export"), "size": text.len(),
+      }));
+    }
+  }
+  items.sort_by(|a, b| b.get("saved_at").and_then(|x| x.as_str()).unwrap_or("").cmp(a.get("saved_at").and_then(|x| x.as_str()).unwrap_or("")));
+  Ok(serde_json::Value::Array(items))
+}
+
+#[tauri::command]
+fn run_get(id: String) -> Result<serde_json::Value, String> {
+  let p = runs_dir().join(format!("{}.json", id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect::<String>()));
+  let text = std::fs::read_to_string(&p).map_err(|e| format!("run not found: {e}"))?;
+  serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn run_delete(id: String) -> Result<(), String> {
+  let p = runs_dir().join(format!("{}.json", id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect::<String>()));
+  std::fs::remove_file(&p).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------- LLM providers
+#[tauri::command]
+async fn llm_status() -> Result<serde_json::Value, String> { Ok(blocking!(llm::status())) }
+#[tauri::command]
+async fn llm_set_key(provider: String, key: String) -> Result<(), String> { blocking!(llm::set_key(&provider, &key)) }
+#[tauri::command]
+async fn llm_set_default(provider: String, model: String) -> Result<(), String> { blocking!(llm::set_default(&provider, &model)) }
+#[tauri::command]
+async fn llm_test(provider: String) -> Result<String, String> { blocking!(llm::test(provider)) }
+#[tauri::command]
+async fn llm_complete(provider: Option<String>, model: Option<String>, system: String, prompt: String, max_tokens: Option<u32>) -> Result<String, String> { blocking!(llm::complete(provider, model, system, prompt, max_tokens.unwrap_or(800))) }
+
+// ---------------------------------------------------------------- Outreach
+#[tauri::command]
+async fn outreach_state() -> Result<outreach::State, String> { Ok(blocking!(outreach::load())) }
+#[tauri::command]
+async fn outreach_save(state: outreach::State) -> Result<outreach::State, String> { blocking!(outreach::save(state)) }
+#[tauri::command]
+async fn outreach_send(thread_id: String, subject: String, body: String, step: u32) -> Result<outreach::Thread, String> { blocking!(outreach::send(thread_id, subject, body, step)) }
+#[tauri::command]
+async fn outreach_sync() -> Result<serde_json::Value, String> { blocking!(outreach::sync_replies()) }
+#[tauri::command]
+async fn outreach_draft(thread_id: String, step: u32, instructions: Option<String>) -> Result<serde_json::Value, String> { blocking!(outreach::draft(thread_id, step, instructions)) }
+#[tauri::command]
+async fn outreach_learn_style(samples: Vec<String>, signature: String, language: String) -> Result<outreach::State, String> { blocking!(outreach::learn_style(samples, signature, language)) }
+#[tauri::command]
+async fn outreach_record_edit(draft: String, final_text: String) -> Result<(), String> { blocking!(outreach::record_edit(draft, final_text)) }
+#[tauri::command]
+async fn imap_save(host: String, port: u16, username: String, password: String) -> Result<serde_json::Value, String> { blocking!(integrations::imap_save(host, port, username, password)) }
+#[tauri::command]
+async fn imap_disconnect() -> Result<(), String> { blocking!(integrations::imap_disconnect()) }
+
 #[tauri::command]
 fn provider_env_status() -> serde_json::Value {
   let keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"];
@@ -268,7 +302,7 @@ fn provider_env_status() -> serde_json::Value {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, bridge_cancel, agent_reach_doctor, provider_env_status, integrations_status, gmail_connect, gmail_send, gmail_disconnect, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

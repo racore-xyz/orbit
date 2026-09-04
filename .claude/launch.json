@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 },
+    { "name": "desktop-web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "desktop:dev"], "port": 1420 }
+  ]
+}

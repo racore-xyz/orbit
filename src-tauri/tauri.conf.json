@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Orbit Growth OS",
+  "version": "0.1.0",
+  "identifier": "com.orbit.growth",
+  "build": {
+    "beforeBuildCommand": "npm run desktop:build",
+    "frontendDist": "../desktop-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "orbit. Growth OS",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/**/*"
+    ],
+    "externalBin": [
+      "binaries/orbit-bridge"
+    ],
+    "publisher": "orbit.",
+    "shortDescription": "orbit. Growth OS \u2014 agentic go-to-market workspace",
+    "longDescription": "Lead Finder, Market Research, campaigns and integrations powered by Agent Reach. Ships with everything it needs: no Python or Node.js required.",
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "nsis/header.bmp",
+        "sidebarImage": "nsis/sidebar.bmp",
+        "installMode": "currentUser",
+        "languages": [
+          "English",
+          "Arabic"
+        ],
+        "displayLanguageSelector": true
+      }
+    }
+  }
+}

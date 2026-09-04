@@ -1,1 +1,79 @@
-node_modules
+# ---------- dependencies ----------
+node_modules/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# ---------- build output ----------
+/.next/
+/.vinext/
+/out/
+/dist/
+/desktop-dist/
+/build/
+/coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---------- tauri / rust ----------
+/src-tauri/target/
+/src-tauri/gen/schemas/
+/src-tauri/gen/android/
+/src-tauri/gen/apple/
+/src-tauri/Cargo.lock.bak
+
+# ---------- cloudflare / vercel / openai sites ----------
+/.wrangler/
+/.vercel/
+/.openai/hosting.local.json
+
+# ---------- environment & secrets ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+token.json
+/config/secrets*.json
+
+# ---------- python (vendor/agent-reach) ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- editors / OS ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# ---------- logs ----------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.log
+
+# ---------- local work ----------
+/outputs/
+/work/
+/tmp/
+
+# ---------- bundled runtimes (restored by scripts/bundle-tools.ps1) ----------
+/src-tauri/resources/node/
+/src-tauri/resources/mcporter/
+/src-tauri/binaries/
+/build-bridge/
