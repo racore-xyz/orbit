@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { siAnthropic, siFacebook, siGooglegemini, siInstagram, siMistralai, siOpenrouter, siReddit, siTiktok, siX, siYoutube } from 'simple-icons';
-import { Activity, BarChart3, Bot, Check, ChevronRight, Compass, Copy, Download, ExternalLink, FileText, History, Inbox, KeyRound, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
+import { Activity, BarChart3, Bot, Check, ChevronRight, Clock, Compass, Copy, Download, ExternalLink, FileText, History, Inbox, KeyRound, Lightbulb, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
 import {
   AppShell,
   Btn,
@@ -13,6 +14,11 @@ import {
   IconTile,
   LangToggle,
   Bars,
+  Donut,
+  MoreBtn,
+  StepLines,
+  Legend,
+  Insight,
   Brand,
   ModuleHero,
   PageHead,
@@ -44,6 +50,21 @@ export default function DesktopApp() {
   /* oxlint-enable react/react-compiler */
   const [openRun, setOpenRun] = useState<string | null>(null);
   const [guideStep, setGuideStep] = useState(0);
+  const [job, setJob] = useState<{ id: string; label: string; percent: number; index?: number; total?: number; done?: boolean } | null>(null);
+  const jobUnlisten = useRef<UnlistenFn | null>(null);
+  const startAutodraft = async () => {
+    const id = `autodraft-${Date.now()}`;
+    try { if (!(await isPermissionGranted())) await requestPermission(); } catch { /* ignore */ }
+    jobUnlisten.current?.();
+    jobUnlisten.current = await listen<Record<string, unknown>>(`jobs://${id}`, (ev) => {
+      const e = ev.payload as { type: string; percent?: number; label?: string; index?: number; total?: number; done?: number; failed?: number; provider?: string; rpm?: number };
+      if (e.type === 'start') setJob({ id, label: t(`Auto-drafting ${e.total} contacts via ${e.provider} (${e.rpm}/min)`, `صياغة تلقائية لـ ${e.total} جهة عبر ${e.provider} (${e.rpm}/دقيقة)`), percent: 0, total: e.total });
+      else if (e.type === 'progress' || e.type === 'item') setJob({ id, label: e.label || '', percent: e.percent ?? 0, index: e.index, total: e.total });
+      else if (e.type === 'done' || e.type === 'cancelled') { setJob({ id, label: e.type === 'done' ? t(`${e.done} drafts ready`, `${e.done} مسودة جاهزة`) : t('Cancelled', 'أُلغي'), percent: 100, done: true }); jobUnlisten.current?.(); jobUnlisten.current = null; void reloadWs(); setTimeout(() => setJob((j) => (j?.id === id ? null : j)), 8000); }
+    });
+    try { await invoke('outreach_autodraft_start', { jobId: id, limit: 50 }); } catch (e) { setJob({ id, label: String(e), percent: 100, done: true }); }
+  };
+  const unread = ws?.workspace.notifications?.filter((n) => !n.read).length || 0;
   const [guideHidden, setGuideHidden] = useState(false);
   const endDemo = async () => { try { await invoke('workspace_demo_clear'); } finally { setGuideHidden(true); setGuideStep(0); setTab(0); await reloadWs(); } };
   const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? TAB.research : mode === 'reddit' ? TAB.social : TAB.leads); };
@@ -95,8 +116,14 @@ export default function DesktopApp() {
       }
       aiLabel={t('Get AI Insight', 'رؤية ذكية')}
       onAi={() => setTab(TAB.agents)}
+      notifications={ws?.workspace.notifications || []}
+      unread={unread}
+      onNotificationsOpen={() => { void invoke('notifications_mark', { ids: [], read: true }).then(() => reloadWs()); }}
+      onNotificationClick={(n) => { if (n.link === 'outreach') setTab(TAB.outreach); else if (n.link === 'history') setTab(TAB.history); }}
+      onNotificationsClear={() => { void invoke('notifications_mark', { ids: [], read: true, clear: true }).then(() => reloadWs()); }}
+      jobs={job ? <div className={`o-job${job.done ? ' done' : ''}`} title={job.label}><span className={`o-spinner${job.done ? ' done' : ''}`} /><span className="o-job-label">{job.label}</span><b>{job.percent}%</b>{!job.done && <button onClick={() => void invoke('job_cancel', { jobId: job.id })} aria-label="Cancel">✕</button>}</div> : null}
     >
-      {tab === 0 && <Dashboard t={t} go={setTab} ws={ws} />}
+      {tab === 0 && <Dashboard t={t} go={setTab} ws={ws} onAutodraft={startAutodraft} jobRunning={!!job && !job.done} />}
       {tab === 1 && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
       {tab === 2 && <Module t={t} title={t('CRM', 'إدارة العملاء')} icon={Users} action={t('Add contact', 'إضافة جهة اتصال')} />}
       {tab === 3 && <Module t={t} title={t('Campaigns', 'الحملات')} icon={Send} action={t('Create campaign', 'إنشاء حملة')} />}
@@ -116,51 +143,112 @@ export default function DesktopApp() {
   );
 }
 
-function Dashboard({ t, go, ws }: { t: T; go: (i: number) => void; ws: WsSummary | null }) {
-  const p = ws?.progress;
+type DashData = {
+  stats: { contacts: { value: number; trend: number | null }; active: { value: number; trend: number | null }; reply_rate: { value: number; trend: number | null; prev: number }; sent_mtd: { value: number; trend: number | null } };
+  series: { x: string; sent: number; replies: number; followups: number }[];
+  distribution: { name: string; value: number }[];
+  templates: { label: string; sent: number; replied: number; rate: number }[];
+  recent: { id: string; name: string; company?: string | null; status: string; sent: number; replies: number; last: string; pending: boolean }[];
+  insights: { best_hour?: { hour: number; rate: number; sent: number } | null; followup_share?: number | null; best_template?: { label: string; rate: number; sent: number } | null; pending_drafts: number; drafts: number; due: number };
+};
+
+function Dashboard({ t, go, ws, onAutodraft, jobRunning }: { t: T; go: (i: number) => void; ws: WsSummary | null; onAutodraft: () => void; jobRunning: boolean }) {
+  const [d, setD] = useState<DashData | null>(null);
+  const [runs, setRuns] = useState<RunMeta[]>([]);
+  /* oxlint-disable react/react-compiler -- load on mount and whenever the workspace summary refreshes */
+  useEffect(() => { void invoke<DashData>('dashboard_data').then(setD).catch(() => undefined); void invoke<RunMeta[]>('run_list').then(setRuns).catch(() => undefined); }, [ws?.workspace.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
   const name = ws?.workspace.profile.name?.split(' ')[0];
-  const goFor: Record<string, number> = { profile: TAB.settings, email: TAB.integrations, inbox: TAB.integrations, llm: TAB.agents, style: TAB.outreach, leads: TAB.leads, research: TAB.research, outreach: TAB.outreach, reply: TAB.outreach };
+  const series = [
+    { key: 'sent', label: t('Sent', 'مُرسل'), tone: 'violet' as const },
+    { key: 'replies', label: t('Replies', 'ردود'), tone: 'sky' as const },
+    { key: 'followups', label: t('Follow-ups', 'متابعات'), tone: 'orange' as const },
+  ];
+  const hasActivity = d ? d.series.some((x) => x.sent || x.replies) : false;
+  const growth = (() => {
+    const m = new Map<string, number>();
+    runs.forEach((r) => { const k = (r.saved_at || '').slice(0, 7); if (k) m.set(k, (m.get(k) || 0) + r.count); });
+    return [...m.entries()].sort((x, y) => x[0].localeCompare(y[0])).slice(-6).map(([k, v]) => ({ x: k.slice(2).replace('-', '/'), leads: v }));
+  })();
+  const statusLabel: Record<string, string> = { draft: t('Draft', 'مسودة'), sent: t('Awaiting', 'بانتظار'), replied: t('Replied', 'ردّ'), closed: t('Closed', 'مغلق'), bounced: t('Bounced', 'مرتد') };
+  const dist = (d?.distribution || []).map((x) => ({ name: statusLabel[x.name] || x.name, value: x.value }));
+  const total = dist.reduce((a2, x) => a2 + x.value, 0);
+  const top = dist.slice().sort((a2, b) => b.value - a2.value)[0];
   return (
     <>
       <PageHead
         title={name ? t(`Welcome back, ${name}!`, `مرحباً بعودتك، ${name}!`) : t('Welcome back!', 'مرحباً بعودتك!')}
         spark={false}
-        sub={ws ? t(`${ws.workspace.profile.company || 'Your workspace'} · ${p?.percent}% set up · ${p?.leads_total.toLocaleString()} leads · ${p?.sent} emails sent`, `${ws.workspace.profile.company || 'مساحتك'} · ${p?.percent}% مكتمل · ${p?.leads_total.toLocaleString()} عميل · ${p?.sent} رسالة مرسلة`) : t("Here's what's happening in your workspace today.", 'إليك ما يحدث في مساحة عملك اليوم.')}
+        sub={t("Welcome back! Here's what's happening today.", 'مرحباً بعودتك! إليك ما يحدث اليوم.')}
         actions={
           <>
-            <Btn variant="secondary" onClick={() => go(1)}>{t('Find leads', 'ابحث عن عملاء')}</Btn>
-            <Btn icon={MessageSquare} onClick={() => go(4)}>{t('Open Outreach', 'فتح التواصل')}</Btn>
+            <Btn variant="secondary" onClick={() => go(TAB.leads)}>{t('New research', 'بحث جديد')}</Btn>
+            <Btn icon={Sparkles} onClick={onAutodraft} disabled={jobRunning || !(d?.insights.drafts)}>{jobRunning ? t('Drafting in background…', 'جاري الصياغة في الخلفية…') : t(`Auto-draft ${d?.insights.drafts || 0} contacts`, `صياغة تلقائية لـ ${d?.insights.drafts || 0} جهة`)}</Btn>
           </>
         }
       />
       <div className="o-grid o-grid-4">
-        <StatCard icon={Users} label={t('Leads collected', 'العملاء المجمّعون')} value={(p?.leads_total || 0).toLocaleString()} trend={null} tone="violet" />
-        <StatCard icon={Compass} label={t('Research runs', 'عمليات بحث')} value={String(p?.runs || 0)} trend={null} tone="sky" />
-        <StatCard icon={Send} label={t('Emails sent', 'رسائل مرسلة')} value={String(p?.sent || 0)} trend={null} tone="orange" />
-        <StatCard icon={MessageSquare} label={t('Replies', 'ردود')} value={String(p?.replied || 0)} trend={null} tone="green" />
+        <StatCard icon={Users} label={t('Total Contacts', 'إجمالي جهات الاتصال')} value={(d?.stats.contacts.value || 0).toLocaleString()} trend={d?.stats.contacts.trend ?? null} />
+        <StatCard icon={Send} label={t('Active Conversations', 'محادثات نشطة')} value={(d?.stats.active.value || 0).toLocaleString()} trend={null} />
+        <StatCard icon={Activity} label={t('Avg. Reply Rate', 'متوسط معدل الرد')} value={`${d?.stats.reply_rate.value ?? 0}%`} trend={d?.stats.reply_rate.trend ?? null} />
+        <StatCard icon={Mail} label={t('Emails Sent (MTD)', 'رسائل مرسلة (الشهر)')} value={(d?.stats.sent_mtd.value || 0).toLocaleString()} trend={d?.stats.sent_mtd.trend ?? null} />
       </div>
       <div className="o-grid o-grid-main">
         <Card>
-          <CardHead title={t('Getting started', 'البدء')} sub={t('Your workspace progress. Everything here is saved on this machine.', 'تقدم مساحة عملك. كل شيء هنا محفوظ على هذا الجهاز.')} action={<Chip tone={p && p.percent === 100 ? 'green' : 'violet'} pill>{p?.percent ?? 0}%</Chip>} />
-          <Progress value={p?.percent ?? 0} />
-          <div className="o-mt">
-            {(p?.checklist || []).map((c) => (
-              <button key={c.id} className={`o-check${c.done ? ' done' : ''}`} onClick={() => go(goFor[c.id] ?? 0)}>
-                <i>{c.done ? '✓' : ''}</i><span>{c.label}</span><ChevronRight size={14} />
-              </button>
-            ))}
-          </div>
+          <CardHead title={t('Outreach Performance', 'أداء التواصل')} sub={t('Last 30 days overview', 'نظرة على آخر ٣٠ يوماً')} action={<Legend series={series} />} />
+          {hasActivity ? <StepLines data={d!.series} series={series} /> : <EmptyState icon={BarChart3} title={t('No sends in the last 30 days', 'لا إرسال في آخر ٣٠ يوماً')} text={t('Send your first emails from Outreach and the daily curve appears here.', 'أرسل أول رسائلك من التواصل وسيظهر المنحنى اليومي هنا.')} action={<Btn variant="secondary" size="sm" onClick={() => go(TAB.outreach)}>{t('Open Outreach', 'فتح التواصل')}</Btn>} />}
         </Card>
         <Card>
-          <CardHead title={t('Outreach pipeline', 'خط التواصل')} sub={t('Live from your conversations', 'مباشر من محادثاتك')} action={<ViewAll label={t('Open', 'فتح')} onClick={() => go(4)} />} />
-          <Tile title={t('Contacts', 'جهات الاتصال')} big={String(p?.contacts || 0)} left={t(`${p?.drafts || 0} drafts`, `${p?.drafts || 0} مسودة`)} right={t(`${p?.sent || 0} sent`, `${p?.sent || 0} مُرسل`)} progress={p?.contacts ? ((p.sent || 0) / p.contacts) * 100 : 0} />
-          <Tile title={t('Follow-ups', 'المتابعات')} big={String(p?.followups || 0)} left={t(`${p?.replied || 0} replied`, `${p?.replied || 0} ردّوا`)} right={p?.style_learned ? t('style learned', 'الأسلوب مُتعلَّم') : t('style not learned', 'الأسلوب غير مُتعلَّم')} progress={p?.sent ? ((p.replied || 0) / p.sent) * 100 : 0} />
+          <CardHead title={t('Conversation Status', 'حالة المحادثات')} sub={t('Distribution', 'التوزيع')} />
+          {total ? <Donut data={dist} centerLabel={top?.name} centerValue={`${Math.round(((top?.value || 0) / total) * 100)}%`} /> : <EmptyState icon={Compass} title={t('No contacts yet', 'لا توجد جهات اتصال بعد')} text={t('Add leads with emails to Outreach.', 'أضف عملاء لديهم إيميلات إلى التواصل.')} />}
         </Card>
         <Card>
-          <CardHead title={t('Recent activity', 'النشاط الأخير')} action={<ViewAll label={t('All', 'الكل')} onClick={() => go(TAB.settings)} />} />
-          {ws?.workspace.activity.length ? ws.workspace.activity.slice(-6).reverse().map((x, i) => (
-            <Row key={i} icon={x.kind === 'outreach' ? Send : x.kind === 'research' ? Compass : x.kind === 'integration' ? Plug : Activity} title={x.text} meta={new Date(x.at).toLocaleString()} />
+          <CardHead title={t('Top Templates', 'أفضل القوالب')} sub={t('Best performers', 'الأعلى أداءً')} action={<ViewAll label={t('View All', 'عرض الكل')} onClick={() => go(TAB.templates)} />} />
+          {d?.templates.length ? d.templates.map((x) => <Tile key={x.label} title={x.label} big={`${x.rate}%`} left={t(`${x.sent} sent`, `${x.sent} مُرسل`)} right={t(`${x.replied} replied`, `${x.replied} ردّوا`)} progress={x.rate} />) : <EmptyState icon={FileText} title={t('No template sends yet', 'لا إرسال بالقوالب بعد')} text={t('Create a template, generate variants, and send. Reply rates per variant show here.', 'أنشئ قالباً وولّد نسخاً وأرسل. معدلات الرد لكل نسخة تظهر هنا.')} action={<Btn variant="secondary" size="sm" onClick={() => go(TAB.templates)}>{t('Templates', 'القوالب')}</Btn>} />}
+        </Card>
+      </div>
+      <div className="o-grid o-grid-wide">
+        <Card>
+          <CardHead title={t('Audience Growth', 'نمو الجمهور')} sub={t('Leads collected per month', 'العملاء المجمّعون شهرياً')} />
+          {growth.length ? <Bars data={growth} dataKey="leads" highlight={growth[growth.length - 1]?.x} /> : <EmptyState icon={Users} title={t('No research runs yet', 'لا توجد عمليات بحث بعد')} text={t('Run Lead Finder to start growing your audience.', 'شغّل البحث عن العملاء لبدء نمو جمهورك.')} action={<Btn variant="secondary" size="sm" onClick={() => go(TAB.leads)}>{t('Find leads', 'ابحث عن عملاء')}</Btn>} />}
+        </Card>
+        <Card>
+          <CardHead title={t('Recent Conversations', 'أحدث المحادثات')} action={<ViewAll label={t('View All', 'عرض الكل')} onClick={() => go(TAB.outreach)} />} />
+          {d?.recent.length ? (
+            <Table columns={[t('Contact', 'جهة الاتصال'), t('Status', 'الحالة'), t('Sent', 'مُرسل'), t('Replies', 'ردود'), '']}>
+              {d.recent.map((r) => (
+                <tr key={r.id} className="o-row-click" onClick={() => go(TAB.outreach)}>
+                  <td><b>{r.name}</b>{r.company ? <><br /><small className="o-muted">{r.company}</small></> : null}</td>
+                  <td><Chip tone={r.status === 'replied' ? 'green' : r.status === 'sent' ? 'violet' : r.pending ? 'orange' : 'neutral'}>{r.pending && r.status === 'draft' ? t('Draft ready', 'مسودة جاهزة') : statusLabel[r.status] || r.status}</Chip></td>
+                  <td>{r.sent}</td><td>{r.replies}</td><td><MoreBtn /></td>
+                </tr>
+              ))}
+            </Table>
+          ) : <EmptyState icon={Inbox} title={t('No conversations yet', 'لا توجد محادثات بعد')} text="" />}
+        </Card>
+        <Card>
+          <CardHead title={t('AI Insights', 'رؤى الذكاء الاصطناعي')} />
+          <Insight icon={Clock} title={t('Best Send Time', 'أفضل وقت للإرسال')} text={d?.insights.best_hour ? t(`${String(d.insights.best_hour.hour).padStart(2, '0')}:00 UTC shows ${d.insights.best_hour.rate}% replies (${d.insights.best_hour.sent} sent)`, `${String(d.insights.best_hour.hour).padStart(2, '0')}:00 UTC يعطي ${d.insights.best_hour.rate}% ردود (${d.insights.best_hour.sent} مُرسل)`) : t('Needs 3+ sends in one hour slot to compare.', 'يحتاج 3+ إرسالات في نفس الساعة للمقارنة.')} />
+          <Insight icon={Lightbulb} title={t('Best Template', 'أفضل قالب')} text={d?.insights.best_template ? `${d.insights.best_template.label} · ${d.insights.best_template.rate}%` : t('Send with templates to rank them by replies.', 'أرسل بالقوالب لترتيبها حسب الردود.')} />
+          <Insight icon={RefreshCw} title={t('Follow-ups matter', 'المتابعات تهم')} text={d?.insights.followup_share != null ? t(`${d.insights.followup_share}% of replies came after a follow-up`, `${d.insights.followup_share}% من الردود جاءت بعد متابعة`) : t(`${d?.insights.due || 0} follow-ups due · ${d?.insights.pending_drafts || 0} drafts ready`, `${d?.insights.due || 0} متابعة مستحقة · ${d?.insights.pending_drafts || 0} مسودة جاهزة`)} />
+          <div className="o-mt"><Btn variant="ai" icon={Sparkles} block onClick={() => go(TAB.outreach)}>{t('Open Outreach Assistant', 'فتح مساعد التواصل')}</Btn></div>
+        </Card>
+      </div>
+      <div className="o-grid o-grid-2">
+        <Card>
+          <CardHead title={t('Recent Activity', 'النشاط الأخير')} sub={t('Everything the workspace did, newest first', 'كل ما فعلته مساحة العمل، الأحدث أولاً')} action={<ViewAll label={t('All', 'الكل')} onClick={() => go(TAB.settings)} />} />
+          {ws?.workspace.activity.length ? ws.workspace.activity.slice(-8).reverse().map((x, i) => (
+            <Row key={i} icon={x.kind === 'outreach' ? Send : x.kind === 'research' ? Compass : x.kind === 'integration' ? Plug : x.kind === 'style' ? Sparkles : Activity} title={x.text} meta={new Date(x.at).toLocaleString()} />
           )) : <EmptyState icon={Activity} title={t('No activity yet', 'لا يوجد نشاط بعد')} text={t('Runs, sends, replies and connections show up here.', 'عمليات البحث والإرسال والردود والاتصالات تظهر هنا.')} />}
+        </Card>
+        <Card>
+          <CardHead title={t('Getting started', 'البدء')} sub={t('Workspace setup', 'إعداد مساحة العمل')} action={<Chip tone={ws && ws.progress.percent === 100 ? 'green' : 'violet'} pill>{ws?.progress.percent ?? 0}%</Chip>} />
+          <Progress value={ws?.progress.percent ?? 0} />
+          <div className="o-mt">
+            {(ws?.progress.checklist || []).map((c) => { const goFor: Record<string, number> = { profile: TAB.settings, email: TAB.integrations, inbox: TAB.integrations, llm: TAB.agents, style: TAB.outreach, leads: TAB.leads, research: TAB.research, outreach: TAB.outreach, reply: TAB.outreach }; return (
+              <button key={c.id} className={`o-check${c.done ? ' done' : ''}`} onClick={() => go(goFor[c.id] ?? 0)}><i>{c.done ? '✓' : ''}</i><span>{c.label}</span><ChevronRight size={14} /></button>
+            ); })}
+          </div>
         </Card>
       </div>
     </>
@@ -186,7 +274,7 @@ function Module({ t, title, icon, action }: { t: T; title: string; icon: any; ac
 
 
 
-type LlmStatus = { default: { provider?: string | null; model?: string | null }; providers: { id: string; name: string; models: string[]; docs: string; configured: boolean }[] };
+type LlmStatus = { default: { provider?: string | null; model?: string | null }; providers: { id: string; name: string; models: string[]; docs: string; configured: boolean; rpm: number; default_rpm: number }[] };
 
 function Agents({ t, agentic, setAgentic }: { t: T; agentic: boolean; setAgentic: (x: boolean) => void }) {
   return <LlmProviders t={t} agentic={agentic} setAgentic={setAgentic} />;
@@ -240,6 +328,7 @@ function LlmProviders({ t, agentic, setAgentic, embedded }: { t: T; agentic?: bo
                 {p.configured && <Btn size="sm" variant="secondary" disabled={!!busy} onClick={() => act(p.id + '-test', async () => { const r = await invoke<string>('llm_test', { provider: p.id }); return `${p.name}: ${r}`; })}>{busy === p.id + '-test' ? '…' : t('Test', 'اختبار')}</Btn>}
                 {p.configured && <Btn size="sm" variant="ghost" disabled={!!busy} onClick={() => act(p.id + '-rm', async () => { await invoke('llm_set_key', { provider: p.id, key: '' }); return t('Key removed', 'تمت إزالة المفتاح'); })}>{t('Remove', 'إزالة')}</Btn>}
               </div>
+              <label className="o-flex" style={{ width: '100%', fontSize: 11, color: 'var(--muted)' }} title={t('Requests per minute the app will not exceed for this provider. Background drafting paces itself to this and backs off on 429.', 'عدد الطلبات في الدقيقة الذي لن يتجاوزه التطبيق لهذا المزوّد. الصياغة الخلفية تلتزم به وتتراجع عند 429.')}>{t('Rate limit', 'حد الاستخدام')}<input className="o-input" aria-label="Requests per minute" type="number" min={1} max={600} defaultValue={p.rpm} style={{ height: 30, width: 76 }} onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== p.rpm) void act(p.id + '-rpm', async () => { await invoke('llm_set_rate_limit', { provider: p.id, rpm: v }); return t(`${p.name}: ${v} requests/min`, `${p.name}: ${v} طلب/دقيقة`); }); }} /> {t('req/min', 'طلب/دقيقة')} <span className="o-muted">({t('default', 'الافتراضي')} {p.default_rpm})</span></label>
             </Card>
           );
         })}
@@ -820,7 +909,7 @@ function HistoryPage({ t, onOpen }: { t: T; onOpen: (id: string, mode: string) =
 type OMsg = { id: string; direction: 'out' | 'in'; subject: string; body: string; at: string; provider?: string | null; step: number; external_id?: string | null; template_id?: string | null; variant_id?: string | null };
 type OVariant = { id: string; label: string; subject: string; body: string; angle?: string };
 type OTemplate = { id: string; name: string; subject: string; body: string; variants: OVariant[]; created_at: string; updated_at: string; in_rotation?: boolean };
-type OThread = { id: string; lead_id?: string | null; name: string; company?: string | null; email: string; status: string; messages: OMsg[]; followup_count: number; max_followups: number; interval_days: number; next_followup_at?: string | null; last_activity: string; sequence_id?: string | null; lead?: Lead | null; notes?: string | null; unread: boolean };
+type OThread = { id: string; lead_id?: string | null; name: string; company?: string | null; email: string; status: string; messages: OMsg[]; pending_draft?: { subject: string; body: string; step: number; at: string; source: string } | null; followup_count: number; max_followups: number; interval_days: number; next_followup_at?: string | null; last_activity: string; sequence_id?: string | null; lead?: Lead | null; notes?: string | null; unread: boolean };
 type OStep = { delay_days: number; subject: string; body: string };
 type OState = { threads: OThread[]; sequences: { id: string; name: string; steps: OStep[] }[]; style: { samples: string[]; guide: string; signature: string; learned: { draft: string; final_text: string; at: string }[]; language: string }; settings: { send_via: string; auto_followup: boolean; default_max_followups: number; default_interval_days: number; default_template_id?: string | null; variant_mode: string }; updated_at: string; templates: OTemplate[] };
 
@@ -889,7 +978,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
     const drafts = s.threads.filter((x) => x.status === 'draft' && x.email);
     let n = 0;
     for (const x of drafts) { const r = await invoke<{ subject: string; body: string; template_id: string; variant_id: string }>('outreach_fill', { threadId: x.id, templateId: s.settings.default_template_id ?? null, variantId: null }); await invoke('outreach_send', { threadId: x.id, subject: r.subject, body: r.body, step: 1, templateId: r.template_id, variantId: r.variant_id }); n++; }
-    await load(); void invoke('workspace_log', { kind: 'outreach', text: `Auto-filled template and sent first email to ${n} contacts` });
+    await load(); void invoke('workspace_log', { kind: 'outreach', text: `Auto-filled template and sent first email to ${n} contacts` }); void invoke('notify', { kind: 'email', title: t(`${n} first emails sent`, `تم إرسال ${n} رسالة أولى`), text: t('Bulk send from your templates finished.', 'اكتمل الإرسال الجماعي من قوالبك.'), link: 'outreach' });
     return t(`${n} first emails sent from the template`, `تم إرسال ${n} رسالة أولى من القالب`);
   });
   const draft = (x: OThread, step = nextStep(x)) => act('draft', async () => { const d = await invoke<{ subject: string; body: string }>('outreach_draft', { threadId: x.id, step }); setSubject(d.subject); setBody(d.body); setDraftRef(d.body); return t(`Draft for step ${step} ready in your style. Edit freely, the model learns from your changes.`, `المسودة للخطوة ${step} جاهزة بأسلوبك. عدّل بحرية، النموذج يتعلم من تعديلاتك.`); });
@@ -898,7 +987,9 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
     const step = nextStep(x);
     if (draftRef) await invoke('outreach_record_edit', { draft: draftRef, finalText: body });
     await invoke<OThread>('outreach_send', { threadId: x.id, subject, body, step, templateId: used?.template_id ?? null, variantId: used?.variant_id ?? null });
+    if (st) void persist({ ...st, threads: st.threads.map((y) => (y.id === x.id ? { ...y, pending_draft: null } : y)) });
     setSubject(''); setBody(''); setDraftRef(''); setUsed(null);
+    void invoke('notify', { kind: 'email', title: t(`Email sent to ${x.name}`, `تم إرسال رسالة إلى ${x.name}`), text: `${subject} → ${x.email}`, link: 'outreach' });
     await load();
     void invoke('workspace_log', { kind: 'outreach', text: `Sent step ${step} to ${x.name} <${x.email}>` });
     return t(`Sent to ${x.email} (step ${step})`, `تم الإرسال إلى ${x.email} (الخطوة ${step})`);
@@ -913,7 +1004,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
       await invoke('outreach_send', { threadId: x.id, subject: d.subject, body: d.body, step });
       n++;
     }
-    await load();
+    await load(); if (n) void invoke('notify', { kind: 'email', title: t(`${n} follow-ups sent`, `تم إرسال ${n} متابعة`), text: t('Automatic follow-ups went out.', 'خرجت المتابعات التلقائية.'), link: 'outreach' });
     return t(`${n} follow-ups sent`, `تم إرسال ${n} متابعة`);
   });
   const prepareQueue = async () => {
@@ -926,7 +1017,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
   const queueDraftAi = (x: OThread) => act('qdraft-' + x.id, async () => { const d = await invoke<{ subject: string; body: string }>('outreach_draft', { threadId: x.id, step: nextStep(x) }); setQueue((q) => ({ ...q, [x.id]: { subject: d.subject, body: d.body, step: nextStep(x), source: 'ai' } })); return t(`AI draft ready for ${x.name}`, `مسودة الذكاء الاصطناعي جاهزة لـ ${x.name}`); });
   const queueSend = (x: OThread) => act('qsend-' + x.id, async () => { const q = queue[x.id]; if (!q) throw new Error('no draft'); await invoke('outreach_send', { threadId: x.id, subject: q.subject, body: q.body, step: q.step, templateId: null, variantId: null }); setQueue((qq) => { const c = { ...qq }; delete c[x.id]; return c; }); await load(); void invoke('workspace_log', { kind: 'outreach', text: `Approved follow-up ${q.step - 1} to ${x.name}` }); return t(`Follow-up sent to ${x.email}`, `تم إرسال المتابعة إلى ${x.email}`); });
   const queueAction = (x: OThread, action: 'postpone' | 'stop' | 'close') => act('qact-' + x.id, async () => { await invoke('outreach_followup_action', { threadId: x.id, action, days: 2 }); setQueue((qq) => { const c = { ...qq }; delete c[x.id]; return c; }); await load(); return action === 'postpone' ? t(`Postponed 2 days: ${x.name}`, `تم التأجيل يومين: ${x.name}`) : action === 'stop' ? t(`Sequence stopped for ${x.name}`, `تم إيقاف التسلسل لـ ${x.name}`) : t(`Closed: ${x.name}`, `تم الإغلاق: ${x.name}`); });
-  const sync = () => act('sync', async () => { const r = await invoke<{ found: number; errors: string[] }>('outreach_sync'); await load(); if (r.found) void invoke('workspace_log', { kind: 'outreach', text: `${r.found} new replies synced from inbox` }); return t(`${r.found} new replies${r.errors.length ? ` · ${r.errors[0]}` : ''}`, `${r.found} رد جديد${r.errors.length ? ` · ${r.errors[0]}` : ''}`); });
+  const sync = () => act('sync', async () => { const r = await invoke<{ found: number; errors: string[] }>('outreach_sync'); await load(); if (r.found) { void invoke('workspace_log', { kind: 'outreach', text: `${r.found} new replies synced from inbox` }); void invoke('notify', { kind: 'reply', title: t(`${r.found} new replies`, `${r.found} رد جديد`), text: t('Open Outreach to read and answer them.', 'افتح التواصل لقراءتها والرد عليها.'), link: 'outreach' }); } return t(`${r.found} new replies${r.errors.length ? ` · ${r.errors[0]}` : ''}`, `${r.found} رد جديد${r.errors.length ? ` · ${r.errors[0]}` : ''}`); });
   const learn = () => act('learn', async () => { const s = await invoke<OState>('outreach_learn_style', { samples: samples.filter((x) => x.trim()), signature, language: lang }); setSt(s); void invoke('workspace_log', { kind: 'style', text: 'Writing style learned from samples' }); return t('Style learned. New drafts will follow it.', 'تم تعلّم الأسلوب. المسودات الجديدة ستتبعه.'); });
   const update = (patch: Partial<OThread>) => { if (!st || !thread) return; void persist({ ...st, threads: st.threads.map((x) => (x.id === thread.id ? { ...x, ...patch } : x)) }); };
   const setSettings = (patch: Partial<OState['settings']>) => { if (!st) return; void persist({ ...st, settings: { ...st.settings, ...patch } }); };
@@ -1037,12 +1128,12 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
             {list.length ? list.map((x) => {
               const last = x.messages[x.messages.length - 1];
               return (
-                <button key={x.id} className={`o-chat-item${sel === x.id ? ' active' : ''}${x.unread ? ' unread' : ''}`} onClick={() => { setSel(x.id); setSubject(''); setBody(''); setDraftRef(''); if (x.unread) update({ unread: false }); }}>
+                <button key={x.id} className={`o-chat-item${sel === x.id ? ' active' : ''}${x.unread ? ' unread' : ''}`} onClick={() => { setSel(x.id); if (x.pending_draft) { setSubject(x.pending_draft.subject); setBody(x.pending_draft.body); setDraftRef(x.pending_draft.body); } else { setSubject(''); setBody(''); setDraftRef(''); } if (x.unread) update({ unread: false }); }}>
                   <div className={`o-lead-avatar person`}>{x.lead?.photo ? <img src={x.lead.photo} alt="" /> : null}<span>{(x.name || x.email).split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()}</span></div>
                   <div className="o-chat-item-body">
                     <div className="o-between"><b>{x.name}</b><small>{last ? new Date(last.at).toLocaleDateString() : ''}</small></div>
                     <div className="o-between"><span className="o-chat-snippet">{last ? `${last.direction === 'out' ? '↗ ' : '↙ '}${last.subject || last.body}` : x.company || x.email}</span><span className={`o-dot ${isDue(x) ? 'orange' : STATUS_TONE[x.status] || 'neutral'}`} title={x.status} /></div>
-                    <small className="o-muted">{x.company || x.email} · {t('step', 'خطوة')} {Math.min(nextStep(x) - 1, x.max_followups + 1)}/{x.max_followups + 1}</small>
+                    <small className="o-muted">{x.company || x.email} · {t('step', 'خطوة')} {Math.min(nextStep(x) - 1, x.max_followups + 1)}/{x.max_followups + 1}{x.pending_draft ? ` · ${t('draft ready', 'مسودة جاهزة')}` : ''}</small>
                   </div>
                 </button>
               );
@@ -1140,7 +1231,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
 
 type WsProfile = { name: string; company: string; role: string; website: string; email: string; industry: string; target_market: string; persona: string; offer: string; goals: string; language: string };
 type WsSummary = {
-  workspace: { id: string; demo?: boolean; created_at: string; updated_at: string; profile: WsProfile; onboarding: { completed: boolean; step: number; completed_at?: string | null; skipped_connect: boolean }; activity: { at: string; kind: string; text: string }[]; notes: string };
+  workspace: { id: string; demo?: boolean; notifications?: { id: string; at: string; kind: string; title: string; text: string; read: boolean; link?: string | null }[]; created_at: string; updated_at: string; profile: WsProfile; onboarding: { completed: boolean; step: number; completed_at?: string | null; skipped_connect: boolean }; activity: { at: string; kind: string; text: string }[]; notes: string };
   progress: { percent: number; checklist: { id: string; label: string; done: boolean }[]; runs: number; lead_runs: number; research_runs: number; leads_total: number; contacts: number; sent: number; followups: number; replied: number; drafts: number; style_learned: boolean; style_edits: number; smtp: boolean; imap: boolean; llm: boolean; webhook: boolean };
   storage: { dir: string; files: { name: string; exists: boolean; size: number }[] };
 };

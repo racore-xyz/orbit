@@ -79,3 +79,4 @@ yarn-error.log*
 /build-bridge/
 /src-tauri/resources/tools/node_modules/
 /src-tauri/resources/tools/package*.json
+.video/

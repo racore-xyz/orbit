@@ -1,5 +1,5 @@
 'use client';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Bell, ChevronDown, ChevronRight, Menu, Moon, MoreHorizontal, Search, Sparkles, Sun } from 'lucide-react';
 import { AppIcon, Brand, Btn, type Icon } from './primitives';
 
@@ -25,6 +25,12 @@ export function AppShell({
   children,
   footerLeft,
   footerRight,
+  notifications,
+  unread,
+  onNotificationsOpen,
+  onNotificationClick,
+  onNotificationsClear,
+  jobs,
 }: {
   dark: boolean;
   rtl?: boolean;
@@ -44,7 +50,14 @@ export function AppShell({
   children: ReactNode;
   footerLeft?: ReactNode;
   footerRight?: ReactNode;
+  notifications?: { id: string; at: string; kind: string; title: string; text: string; read: boolean; link?: string | null }[];
+  unread?: number;
+  onNotificationsOpen?: () => void;
+  onNotificationClick?: (n: { id: string; link?: string | null }) => void;
+  onNotificationsClear?: () => void;
+  jobs?: ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
   const flat = groups.flatMap((g) => g.items);
   let idx = 0;
   return (
@@ -115,10 +128,30 @@ export function AppShell({
               <input placeholder={searchPlaceholder} />
               <kbd>⌘K</kbd>
             </div>
-            <button className="o-iconbtn" aria-label="Notifications">
-              <Bell size={17} />
-              <i />
-            </button>
+            {jobs}
+            <div className="o-bell-wrap">
+              <button className="o-iconbtn" aria-label="Notifications" onClick={() => { setOpen(!open); if (!open) onNotificationsOpen?.(); }}>
+                <Bell size={17} />
+                {unread ? <em className="o-bell-count">{unread > 9 ? '9+' : unread}</em> : null}
+              </button>
+              {open && (
+                <div className="o-bell-menu">
+                  <div className="o-between" style={{ padding: '10px 12px', borderBottom: '1px solid var(--line)' }}>
+                    <b style={{ fontSize: 13 }}>Notifications</b>
+                    <button className="o-btn o-btn-text" style={{ fontSize: 12 }} onClick={() => { onNotificationsClear?.(); }}>Clear</button>
+                  </div>
+                  <div className="o-bell-list">
+                    {(notifications || []).length ? [...(notifications || [])].reverse().slice(0, 20).map((n) => (
+                      <button key={n.id} className={`o-bell-item${n.read ? '' : ' unread'}`} onClick={() => { onNotificationClick?.(n); setOpen(false); }}>
+                        <b>{n.title}</b>
+                        <span>{n.text}</span>
+                        <small>{new Date(n.at).toLocaleString()}</small>
+                      </button>
+                    )) : <div className="o-muted" style={{ padding: 16, fontSize: 12 }}>No notifications yet</div>}
+                  </div>
+                </div>
+              )}
+            </div>
             {topActions}
             {aiLabel && (
               <Btn variant="ai" icon={Sparkles} onClick={onAi}>

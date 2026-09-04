@@ -40,7 +40,12 @@ pub struct Thread {
   pub lead: Option<serde_json::Value>,
   pub notes: Option<String>,
   pub unread: bool,
+  #[serde(default)]
+  pub pending_draft: Option<PendingDraft>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct PendingDraft { pub subject: String, pub body: String, pub step: u32, pub at: String, pub source: String }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Step { pub delay_days: u32, pub subject: String, pub body: String }
@@ -393,4 +398,122 @@ pub fn followup_action(thread_id: String, action: String, days: u32) -> Result<T
   let out = t.clone();
   save(st)?;
   Ok(out)
+}
+
+/// Background auto-drafting: one LLM draft per contact without a message, rate-limited per provider,
+/// progress streamed on `jobs://<job_id>`, a notification when done. Runs on its own thread.
+pub fn autodraft_job(app: tauri::AppHandle, job_id: String, limit: usize, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+  use tauri::Emitter;
+  let topic = format!("jobs://{job_id}");
+  let st = load();
+  let targets: Vec<String> = st.threads.iter().filter(|t| t.status == "draft" && !t.email.is_empty() && t.pending_draft.is_none()).map(|t| t.id.clone()).take(limit).collect();
+  let total = targets.len();
+  let provider = crate::llm::settings().provider.unwrap_or_default();
+  let rpm = crate::llm::rpm_for(&provider);
+  let _ = app.emit(&topic, serde_json::json!({ "type": "start", "job": "autodraft", "total": total, "provider": provider, "rpm": rpm, "percent": 0 }));
+  let mut done = 0usize;
+  let mut failed = 0usize;
+  let mut last_err = String::new();
+  for (i, id) in targets.iter().enumerate() {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) { let _ = app.emit(&topic, serde_json::json!({ "type": "cancelled", "done": done, "total": total })); return; }
+    let name = load().threads.iter().find(|t| &t.id == id).map(|t| t.name.clone()).unwrap_or_default();
+    let _ = app.emit(&topic, serde_json::json!({ "type": "progress", "index": i + 1, "total": total, "label": name, "percent": (i * 100 / total.max(1)) }));
+    match draft(id.clone(), 1, None) {
+      Ok(d) => {
+        let mut s2 = load();
+        if let Some(t) = s2.threads.iter_mut().find(|t| &t.id == id) {
+          t.pending_draft = Some(PendingDraft { subject: d["subject"].as_str().unwrap_or("").into(), body: d["body"].as_str().unwrap_or("").into(), step: 1, at: integrations::now_iso(), source: "autodraft".into() });
+        }
+        let _ = save(s2);
+        done += 1;
+        let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": true, "percent": ((i + 1) * 100 / total.max(1)) }));
+      }
+      Err(e) => {
+        failed += 1; last_err = e.clone();
+        let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": false, "error": e, "percent": ((i + 1) * 100 / total.max(1)) }));
+        if e.contains("No API key") || e.contains("No LLM provider") { break; }
+      }
+    }
+  }
+  let title = if failed == 0 { format!("{done} drafts ready to review") } else { format!("{done} drafts ready, {failed} failed") };
+  let text = if failed == 0 { "Open Outreach: every contact has a draft in your style waiting for your approval.".to_string() } else { format!("Last error: {last_err}") };
+  let _ = crate::workspace::notify(Some(&app), "autodraft", &title, &text, Some("outreach"));
+  let _ = crate::workspace::log("outreach".into(), format!("Auto-draft finished: {done} ready, {failed} failed"));
+  let _ = app.emit(&topic, serde_json::json!({ "type": "done", "done": done, "failed": failed, "total": total, "percent": 100 }));
+}
+
+/// Dashboard data computed from the real stores (last 30 days vs the 30 before).
+pub fn dashboard() -> serde_json::Value {
+  let st = load();
+  let now = integrations::now_iso();
+  let now_s = parse_iso(&now).unwrap_or(0);
+  let day = 86400u64;
+  let cut30 = now_s.saturating_sub(30 * day);
+  let cut60 = now_s.saturating_sub(60 * day);
+  let month_start = format!("{}-01T00:00:00Z", &now[..7]);
+  let month_s = parse_iso(&month_start).unwrap_or(0);
+  let ts = |iso: &str| parse_iso(iso).unwrap_or(0);
+  let msgs: Vec<(&Thread, &Msg)> = st.threads.iter().flat_map(|t| t.messages.iter().map(move |m| (t, m))).collect();
+  let sent_in = |a: u64, b: u64| msgs.iter().filter(|(_, m)| m.direction == "out" && ts(&m.at) >= a && ts(&m.at) < b).count();
+  let replies_in = |a: u64, b: u64| msgs.iter().filter(|(_, m)| m.direction == "in" && ts(&m.at) >= a && ts(&m.at) < b).count();
+  let sent30 = sent_in(cut30, u64::MAX); let sent_prev = sent_in(cut60, cut30);
+  let rep30 = replies_in(cut30, u64::MAX); let rep_prev = replies_in(cut60, cut30);
+  let contacts30 = st.threads.iter().filter(|t| ts(&t.last_activity) >= cut30).count();
+  let contacts_prev = st.threads.iter().filter(|t| ts(&t.last_activity) >= cut60 && ts(&t.last_activity) < cut30).count();
+  let active = st.threads.iter().filter(|t| t.status == "sent").count();
+  let pct = |a: usize, b: usize| -> Option<f64> { if b == 0 { None } else { Some(((a as f64 - b as f64) / b as f64 * 100.0 * 10.0).round() / 10.0) } };
+  let rate = |r: usize, s: usize| if s == 0 { 0.0 } else { (r as f64 / s as f64 * 1000.0).round() / 10.0 };
+  // daily series for the last 30 days
+  let mut series = Vec::new();
+  for d in (0..30).rev() {
+    let a = now_s.saturating_sub((d + 1) * day); let b = now_s.saturating_sub(d * day);
+    let label = integrations::iso_from_secs(b)[5..10].replace('-', "/");
+    series.push(serde_json::json!({ "x": label, "sent": sent_in(a, b), "replies": replies_in(a, b), "followups": msgs.iter().filter(|(_, m)| m.direction == "out" && m.step > 1 && ts(&m.at) >= a && ts(&m.at) < b).count() }));
+  }
+  // status distribution
+  let mut dist: std::collections::BTreeMap<String, usize> = Default::default();
+  for t in &st.threads { *dist.entry(t.status.clone()).or_default() += 1; }
+  // template/variant performance
+  let mut perf: Vec<serde_json::Value> = Vec::new();
+  for tpl in &st.templates {
+    let mut rows: Vec<(String, String)> = vec![("base".into(), format!("{} · base", tpl.name))];
+    rows.extend(tpl.variants.iter().map(|v| (v.id.clone(), format!("{} · {}", tpl.name, v.label))));
+    for (vid, label) in rows {
+      let sent: Vec<&Thread> = st.threads.iter().filter(|t| t.messages.iter().any(|m| m.direction == "out" && m.step == 1 && m.template_id.as_deref() == Some(&tpl.id) && (m.variant_id.clone().unwrap_or_else(|| "base".into()) == vid))).collect();
+      if sent.is_empty() { continue; }
+      let replied = sent.iter().filter(|t| t.status == "replied").count();
+      perf.push(serde_json::json!({ "label": label, "sent": sent.len(), "replied": replied, "rate": rate(replied, sent.len()) }));
+    }
+  }
+  perf.sort_by(|a, b| b["rate"].as_f64().partial_cmp(&a["rate"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
+  // recent conversations
+  let mut recent: Vec<&Thread> = st.threads.iter().collect();
+  recent.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+  let recent_json: Vec<serde_json::Value> = recent.iter().take(5).map(|t| serde_json::json!({ "id": t.id, "name": t.name, "company": t.company, "status": t.status, "sent": t.messages.iter().filter(|m| m.direction == "out").count(), "replies": t.messages.iter().filter(|m| m.direction == "in").count(), "last": t.last_activity, "pending": t.pending_draft.is_some() })).collect();
+  // insights
+  let mut hours: std::collections::HashMap<u32, (usize, usize)> = Default::default();
+  for t in &st.threads {
+    if let Some(first) = t.messages.iter().find(|m| m.direction == "out") {
+      let h = first.at.get(11..13).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
+      let e = hours.entry(h).or_default(); e.0 += 1; if t.status == "replied" { e.1 += 1; }
+    }
+  }
+  let best_hour = hours.iter().filter(|(_, v)| v.0 >= 3).max_by(|a, b| rate(a.1 .1, a.1 .0).partial_cmp(&rate(b.1 .1, b.1 .0)).unwrap()).map(|(h, v)| serde_json::json!({ "hour": h, "rate": rate(v.1, v.0), "sent": v.0 }));
+  let fu_replies = st.threads.iter().filter(|t| t.status == "replied" && t.followup_count > 0).count();
+  let total_replied = st.threads.iter().filter(|t| t.status == "replied").count();
+  let pending = st.threads.iter().filter(|t| t.pending_draft.is_some()).count();
+  let drafts = st.threads.iter().filter(|t| t.status == "draft").count();
+  serde_json::json!({
+    "stats": {
+      "contacts": { "value": st.threads.len(), "trend": pct(contacts30, contacts_prev) },
+      "active": { "value": active, "trend": None::<f64> },
+      "reply_rate": { "value": rate(rep30, sent30), "trend": pct(rep30, rep_prev), "prev": rate(rep_prev, sent_prev) },
+      "sent_mtd": { "value": sent_in(month_s, u64::MAX), "trend": pct(sent30, sent_prev) },
+    },
+    "series": series,
+    "distribution": dist.iter().map(|(k, v)| serde_json::json!({ "name": k, "value": v })).collect::<Vec<_>>(),
+    "templates": perf.iter().take(3).cloned().collect::<Vec<_>>(),
+    "recent": recent_json,
+    "insights": { "best_hour": best_hour, "followup_share": if total_replied > 0 { Some(rate(fu_replies, total_replied)) } else { None }, "best_template": perf.first().cloned(), "pending_drafts": pending, "drafts": drafts, "due": due(&st).len() },
+  })
 }

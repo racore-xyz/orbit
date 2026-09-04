@@ -339,6 +339,34 @@ async fn workspace_demo_clear() -> Result<(), String> { blocking!(workspace::dem
 #[tauri::command]
 async fn workspace_export() -> Result<String, String> { blocking!(workspace::export()) }
 
+// ---------------------------------------------------------------- background jobs, notifications, dashboard
+fn job_flags() -> &'static Mutex<HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>> {
+  static F: OnceLock<Mutex<HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>> = OnceLock::new();
+  F.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Start background auto-drafting for contacts without a message. Progress on `jobs://<job_id>`.
+#[tauri::command]
+fn outreach_autodraft_start(app: tauri::AppHandle, job_id: String, limit: Option<u32>) -> Result<(), String> {
+  let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+  job_flags().lock().map_err(|e| e.to_string())?.insert(job_id.clone(), flag.clone());
+  let lim = limit.unwrap_or(50) as usize;
+  std::thread::spawn(move || { outreach::autodraft_job(app, job_id.clone(), lim, flag); let _ = job_flags().lock().map(|mut m| m.remove(&job_id)); });
+  Ok(())
+}
+#[tauri::command]
+fn job_cancel(job_id: String) -> Result<bool, String> {
+  Ok(job_flags().lock().map_err(|e| e.to_string())?.get(&job_id).map(|f| { f.store(true, std::sync::atomic::Ordering::Relaxed); true }).unwrap_or(false))
+}
+#[tauri::command]
+async fn notify(app: tauri::AppHandle, kind: String, title: String, text: String, link: Option<String>) -> Result<workspace::Notification, String> { blocking!(workspace::notify(Some(&app), &kind, &title, &text, link.as_deref())) }
+#[tauri::command]
+async fn notifications_mark(ids: Vec<String>, read: bool, clear: Option<bool>) -> Result<usize, String> { blocking!(workspace::notifications_mark(ids, read, clear.unwrap_or(false))) }
+#[tauri::command]
+async fn dashboard_data() -> Result<serde_json::Value, String> { Ok(blocking!(outreach::dashboard())) }
+#[tauri::command]
+async fn llm_set_rate_limit(provider: String, rpm: u32) -> Result<(), String> { blocking!(llm::set_rate_limit(&provider, rpm)) }
+
 #[tauri::command]
 fn provider_env_status() -> serde_json::Value {
   let keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"];
@@ -349,7 +377,8 @@ fn provider_env_status() -> serde_json::Value {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear])
+    .plugin(tauri_plugin_notification::init())
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

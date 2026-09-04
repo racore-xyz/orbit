@@ -38,7 +38,12 @@ pub struct Workspace {
   pub notes: String,
   #[serde(default)]
   pub demo: bool,
+  #[serde(default)]
+  pub notifications: Vec<Notification>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct Notification { pub id: String, pub at: String, pub kind: String, pub title: String, pub text: String, pub read: bool, #[serde(default)] pub link: Option<String> }
 
 fn dir() -> std::path::PathBuf {
   let base = std::env::var("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
@@ -206,7 +211,7 @@ pub fn demo_seed() -> Result<(), String> {
       id: id.into(), lead_id: lead.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()), name: lead["name"].as_str().unwrap_or("").into(), company: lead["company"].as_str().map(|s| s.to_string()),
       email: lead["emails"][0]["email"].as_str().unwrap_or("").into(), status: status.into(),
       messages: msgs.iter().enumerate().map(|(i, (dir, subj, body, step, mins_ago))| outreach::Msg { id: format!("m-{}", i + 1), direction: dir.to_string(), subject: subj.to_string(), body: body.to_string(), at: integrations::iso_from_secs((base - mins_ago * 60).max(0) as u64), provider: if *dir == "out" { Some("demo".into()) } else { None }, step: *step, external_id: None, template_id: None, variant_id: None }).collect(),
-      followup_count: followups, max_followups: 3, interval_days: 3, next_followup_at: next.map(|m| integrations::iso_from_secs((base + m * 60).max(0) as u64)), last_activity: now.clone(), sequence_id: Some("default".into()), lead: Some(lead.clone()), notes: None, unread: status == "replied",
+      followup_count: followups, max_followups: 3, interval_days: 3, next_followup_at: next.map(|m| integrations::iso_from_secs((base + m * 60).max(0) as u64)), last_activity: now.clone(), sequence_id: Some("default".into()), lead: Some(lead.clone()), notes: None, unread: status == "replied", pending_draft: None,
     }
   };
   let l = &run1["leads"];
@@ -244,4 +249,27 @@ pub fn demo_clear() -> Result<(), String> {
   w.activity.retain(|a| a.kind != "demo" && !a.text.starts_with("Demo:"));
   w.activity.push(Activity { at: integrations::now_iso(), kind: "workspace".into(), text: "Guided tour finished, sample data removed".into() });
   save(w).map(|_| ())
+}
+
+/// In-app notification (persisted) plus an OS toast when an app handle is available.
+pub fn notify(app: Option<&tauri::AppHandle>, kind: &str, title: &str, text: &str, link: Option<&str>) -> Result<Notification, String> {
+  let mut w = load();
+  let n = Notification { id: format!("n-{}", w.notifications.len() + 1 + (parse_secs() % 1000) as usize), at: integrations::now_iso(), kind: kind.into(), title: title.into(), text: text.into(), read: false, link: link.map(|s| s.to_string()) };
+  w.notifications.push(n.clone());
+  if w.notifications.len() > 200 { let k = w.notifications.len() - 200; w.notifications.drain(0..k); }
+  save(w)?;
+  if let Some(app) = app {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(format!("orbit. · {title}")).body(text).show();
+  }
+  Ok(n)
+}
+fn parse_secs() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
+
+pub fn notifications_mark(ids: Vec<String>, read: bool, clear: bool) -> Result<usize, String> {
+  let mut w = load();
+  if clear { w.notifications.clear(); } else { for n in w.notifications.iter_mut() { if ids.is_empty() || ids.contains(&n.id) { n.read = read; } } }
+  let unread = w.notifications.iter().filter(|n| !n.read).count();
+  save(w)?;
+  Ok(unread)
 }
