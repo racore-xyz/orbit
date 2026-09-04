@@ -16,6 +16,10 @@ pub struct Msg {
   pub provider: Option<String>,
   pub step: u32,
   pub external_id: Option<String>,
+  #[serde(default)]
+  pub template_id: Option<String>,
+  #[serde(default)]
+  pub variant_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -51,10 +55,18 @@ pub struct Learned { pub draft: String, pub final_text: String, pub at: String }
 pub struct Style { pub samples: Vec<String>, pub guide: String, pub signature: String, pub learned: Vec<Learned>, pub language: String }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
-pub struct Settings { pub send_via: String, pub auto_followup: bool, pub default_max_followups: u32, pub default_interval_days: u32 }
+pub struct Settings { pub send_via: String, pub auto_followup: bool, pub default_max_followups: u32, pub default_interval_days: u32, #[serde(default)] pub default_template_id: Option<String>, #[serde(default)] pub variant_mode: String }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
-pub struct State { pub threads: Vec<Thread>, pub sequences: Vec<Sequence>, pub style: Style, pub settings: Settings, pub updated_at: String }
+pub struct Variant { pub id: String, pub label: String, pub subject: String, pub body: String, #[serde(default)] pub angle: String }
+
+/// The user's base first email, written in their own words with {{placeholders}}, plus generated variants.
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct Template { pub id: String, pub name: String, pub subject: String, pub body: String, pub variants: Vec<Variant>, pub created_at: String, pub updated_at: String, #[serde(default = "default_true")] pub in_rotation: bool }
+fn default_true() -> bool { true }
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct State { pub threads: Vec<Thread>, pub sequences: Vec<Sequence>, pub style: Style, pub settings: Settings, pub updated_at: String, #[serde(default)] pub templates: Vec<Template> }
 
 fn path() -> std::path::PathBuf {
   let base = std::env::var("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
@@ -75,6 +87,7 @@ pub fn load() -> State {
     ] });
   }
   if s.style.language.is_empty() { s.style.language = "en".into(); }
+  if s.settings.variant_mode.is_empty() { s.settings.variant_mode = "rotate".into(); }
   s
 }
 
@@ -100,7 +113,7 @@ pub fn parse_iso(iso: &str) -> Option<u64> {
 }
 
 /// Send one message on a thread through the configured provider and record it.
-pub fn send(thread_id: String, subject: String, body: String, step: u32) -> Result<Thread, String> {
+pub fn send(thread_id: String, subject: String, body: String, step: u32, template_id: Option<String>, variant_id: Option<String>) -> Result<Thread, String> {
   let mut st = load();
   let via = st.settings.send_via.clone();
   let idx = st.threads.iter().position(|t| t.id == thread_id).ok_or("thread not found")?;
@@ -109,7 +122,7 @@ pub fn send(thread_id: String, subject: String, body: String, step: u32) -> Resu
   let res = integrations::smtp_send(to.clone(), subject.clone(), body.clone())?;
   let now = integrations::now_iso();
   let t = &mut st.threads[idx];
-  t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "out".into(), subject, body, at: now.clone(), provider: Some(via), step, external_id: res.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()) });
+  t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "out".into(), subject, body, at: now.clone(), provider: Some(via), step, external_id: res.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()), template_id, variant_id });
   if step > 1 { t.followup_count = step - 1; }
   t.last_activity = now.clone();
   t.unread = false;
@@ -138,7 +151,7 @@ pub fn sync_replies() -> Result<serde_json::Value, String> {
         for r in list {
           let ext = r.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
           if !ext.is_empty() && known.contains(&ext) { continue; }
-          t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "in".into(), subject: r.get("subject").and_then(|v| v.as_str()).unwrap_or("").into(), body: r.get("body").and_then(|v| v.as_str()).unwrap_or("").into(), at: r.get("at").and_then(|v| v.as_str()).unwrap_or("").into(), provider: None, step: 0, external_id: Some(ext) });
+          t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "in".into(), subject: r.get("subject").and_then(|v| v.as_str()).unwrap_or("").into(), body: r.get("body").and_then(|v| v.as_str()).unwrap_or("").into(), at: r.get("at").and_then(|v| v.as_str()).unwrap_or("").into(), provider: None, step: 0, external_id: Some(ext), template_id: None, variant_id: None });
           t.status = "replied".into();
           t.next_followup_at = None;
           t.unread = true;
@@ -230,4 +243,154 @@ fn split_subject(text: &str) -> (String, String) {
   }
   rest.extend(lines);
   (subject, rest.join("\n").trim().to_string())
+}
+
+// ---------------------------------------------------------------- templates (base email in the user's words + variants)
+pub const PLACEHOLDERS: &[(&str, &str)] = &[
+  ("{{first_name}}", "recipient first name"), ("{{name}}", "recipient full name"), ("{{company}}", "recipient company"), ("{{industry}}", "recipient industry"),
+  ("{{headline}}", "recipient headline"), ("{{location}}", "recipient city/country"), ("{{employees}}", "company size"),
+  ("{{my_name}}", "your name"), ("{{my_company}}", "your company"), ("{{my_role}}", "your role"), ("{{my_website}}", "your website"), ("{{offer}}", "your offer (profile)"), ("{{signature}}", "your signature"),
+];
+
+fn get_str(v: &serde_json::Value, k: &str) -> String { v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string() }
+
+/// Replace placeholders with lead + profile values. Unknown placeholders are left blank, never sent raw.
+pub fn fill(text: &str, lead: &serde_json::Value, thread: &Thread) -> String {
+  let ws = crate::workspace::load().profile;
+  let st = load();
+  let name = if !thread.name.is_empty() { thread.name.clone() } else { get_str(lead, "name") };
+  let first = name.split_whitespace().next().unwrap_or("").trim_start_matches("Demo:").trim().to_string();
+  let company = thread.company.clone().unwrap_or_else(|| get_str(lead, "company"));
+  let pairs = [
+    ("{{first_name}}", first), ("{{name}}", name), ("{{company}}", company), ("{{industry}}", get_str(lead, "industry")),
+    ("{{headline}}", get_str(lead, "headline")), ("{{location}}", if get_str(lead, "location").is_empty() { get_str(lead, "headquarters") } else { get_str(lead, "location") }), ("{{employees}}", get_str(lead, "employees")),
+    ("{{my_name}}", ws.name), ("{{my_company}}", ws.company), ("{{my_role}}", ws.role), ("{{my_website}}", ws.website), ("{{offer}}", ws.offer), ("{{signature}}", st.style.signature),
+  ];
+  let mut out = text.to_string();
+  for (k, v) in pairs { out = out.replace(k, v.trim()); }
+  let re_left = regex_lite_replace(&out);
+  re_left
+}
+fn regex_lite_replace(s: &str) -> String {
+  // strip any leftover {{...}} tokens
+  let mut out = String::new();
+  let mut rest = s;
+  while let Some(i) = rest.find("{{") {
+    out.push_str(&rest[..i]);
+    if let Some(j) = rest[i..].find("}}") { rest = &rest[i + j + 2..]; } else { rest = &rest[i + 2..]; }
+  }
+  out.push_str(rest);
+  out
+}
+
+/// Pick a variant: explicit id, or round-robin by thread id when variant_mode == "rotate", or the base.
+pub fn pick_variant<'a>(t: &'a Template, thread_id: &str, variant_id: Option<&str>, mode: &str) -> (Option<&'a Variant>, String, String) {
+  if let Some(id) = variant_id {
+    if id == "base" { return (None, t.subject.clone(), t.body.clone()); }
+    if let Some(v) = t.variants.iter().find(|v| v.id == id) { return (Some(v), v.subject.clone(), v.body.clone()); }
+  }
+  if mode == "rotate" && !t.variants.is_empty() {
+    let h = thread_id.bytes().fold(0usize, |a, b| a.wrapping_mul(31).wrapping_add(b as usize));
+    let n = t.variants.len() + 1; // base + variants
+    let k = h % n;
+    if k == 0 { return (None, t.subject.clone(), t.body.clone()); }
+    let v = &t.variants[k - 1];
+    return (Some(v), v.subject.clone(), v.body.clone());
+  }
+  (None, t.subject.clone(), t.body.clone())
+}
+
+/// Auto-fill a template for a thread (no LLM, instant).
+pub fn fill_for_thread(thread_id: String, template_id: Option<String>, variant_id: Option<String>) -> Result<serde_json::Value, String> {
+  let st = load();
+  let thread = st.threads.iter().find(|t| t.id == thread_id).ok_or("thread not found")?;
+  let tpl = match template_id {
+    Some(tid) => st.templates.iter().find(|t| t.id == tid).ok_or("template not found")?,
+    None => {
+      // Distribute across every template in rotation (default first), then across its variants.
+      let pool: Vec<&Template> = st.templates.iter().filter(|t| t.in_rotation && !t.body.trim().is_empty()).collect();
+      if pool.is_empty() {
+        let tid = st.settings.default_template_id.clone().ok_or("No template yet. Create one in the Templates tab.")?;
+        st.templates.iter().find(|t| t.id == tid).ok_or("template not found")?
+      } else if st.settings.variant_mode == "rotate" && pool.len() > 1 {
+        let h = thread.id.bytes().rev().fold(7usize, |a, b| a.wrapping_mul(17).wrapping_add(b as usize));
+        pool[h % pool.len()]
+      } else {
+        st.templates.iter().find(|t| Some(&t.id) == st.settings.default_template_id.as_ref()).unwrap_or(pool[0])
+      }
+    }
+  };
+  let (v, subject, body) = pick_variant(tpl, &thread.id, variant_id.as_deref(), &st.settings.variant_mode);
+  let lead = thread.lead.clone().unwrap_or(serde_json::json!({}));
+  Ok(serde_json::json!({ "subject": fill(&subject, &lead, thread), "body": fill(&body, &lead, thread), "template_id": tpl.id, "variant_id": v.map(|x| x.id.clone()).unwrap_or_else(|| "base".into()), "variant_label": v.map(|x| x.label.clone()).unwrap_or_else(|| "Base".into()) }))
+}
+
+/// Generate N variants of the user's base email, in their style, keeping placeholders intact.
+pub fn generate_variants(template_id: String, count: u32) -> Result<State, String> {
+  let mut st = load();
+  let idx = st.templates.iter().position(|t| t.id == template_id).ok_or("template not found")?;
+  let base = st.templates[idx].clone();
+  if base.body.trim().is_empty() { return Err("Write the base email first.".into()); }
+  let n = count.clamp(2, 6);
+  let angles = ["shorter and more direct", "opens with a question about their situation", "leads with social proof or a concrete result", "curiosity-driven, one idea only", "warm and personal, mentions their location or industry", "problem-first, names the pain before the offer"];
+  let mut system = style_prompt(&st);
+  system.push_str("\n\nYou are rewriting the user's OWN base email into variants. Keep the user's voice, greeting and sign-off. Keep every {{placeholder}} exactly as written (do not fill them). Each variant must be a complete email of similar length, with a different angle. Output exactly this format for each variant:\n=== VARIANT k ===\nLabel: <2-4 word label>\nSubject: <subject>\n\n<body>\n");
+  let user = format!("BASE EMAIL (written by the user):\nSubject: {}\n\n{}\n\nProduce {} variants. Angles, in order: {}.", base.subject, base.body, n, angles.iter().take(n as usize).enumerate().map(|(i, a)| format!("{}) {}", i + 1, a)).collect::<Vec<_>>().join("; "));
+  let text = crate::llm::complete(None, None, system, user, 2200)?;
+  let mut variants = Vec::new();
+  for (i, chunk) in text.split("=== VARIANT").skip(1).enumerate() {
+    let body_start = chunk.find('\n').map(|x| x + 1).unwrap_or(0);
+    let block = &chunk[body_start..];
+    let mut label = String::new();
+    let mut subject = String::new();
+    let mut lines = block.lines().peekable();
+    let mut body_lines: Vec<&str> = Vec::new();
+    while let Some(l) = lines.next() {
+      let lt = l.trim();
+      if label.is_empty() && lt.to_lowercase().starts_with("label:") { label = lt[6..].trim().to_string(); continue; }
+      if subject.is_empty() && lt.to_lowercase().starts_with("subject:") { subject = lt[8..].trim().to_string(); continue; }
+      if body_lines.is_empty() && lt.is_empty() { continue; }
+      body_lines.push(l);
+      break;
+    }
+    body_lines.extend(lines);
+    let body = body_lines.join("\n").trim().to_string();
+    if body.is_empty() { continue; }
+    variants.push(Variant { id: format!("v{}-{}", i + 1, integrations::now_iso().replace([':', '-', 'T', 'Z'], "")), label: if label.is_empty() { format!("Variant {}", i + 1) } else { label }, subject: if subject.is_empty() { base.subject.clone() } else { subject }, body, angle: angles.get(i).unwrap_or(&"").to_string() });
+  }
+  if variants.is_empty() { return Err("The model returned no variants. Try again or use another provider.".into()); }
+  st.templates[idx].variants = variants;
+  st.templates[idx].updated_at = integrations::now_iso();
+  if st.settings.default_template_id.is_none() { st.settings.default_template_id = Some(template_id); }
+  save(st)
+}
+
+/// Fill a sequence step (follow-up) template for a thread without the LLM.
+pub fn fill_step(thread_id: String, step: u32) -> Result<serde_json::Value, String> {
+  let st = load();
+  let thread = st.threads.iter().find(|t| t.id == thread_id).ok_or("thread not found")?;
+  let seq = st.sequences.iter().find(|s| Some(&s.id) == thread.sequence_id.as_ref()).or(st.sequences.first()).ok_or("no sequence")?;
+  let tpl = seq.steps.get((step.max(1) - 1) as usize).cloned().unwrap_or_default();
+  let lead = thread.lead.clone().unwrap_or(serde_json::json!({}));
+  let first_subject = thread.messages.iter().find(|m| m.direction == "out").map(|m| m.subject.clone()).unwrap_or_default();
+  let mut subject = fill(&tpl.subject, &lead, thread);
+  if step > 1 && !first_subject.is_empty() { subject = if first_subject.to_lowercase().starts_with("re:") { first_subject } else { format!("Re: {first_subject}") }; }
+  let body = fill(&tpl.body.replace("{{opener}}", "").replace("{{value}}", "").replace("{{value_short}}", "").replace("{{cta}}", ""), &lead, thread);
+  let body = body.split('\n').collect::<Vec<_>>().join("\n").replace("\n\n\n\n", "\n\n").replace("\n\n\n", "\n\n");
+  Ok(serde_json::json!({ "subject": subject, "body": body.trim(), "step": step }))
+}
+
+/// Postpone a due follow-up by `days`, stop the sequence, or close the thread.
+pub fn followup_action(thread_id: String, action: String, days: u32) -> Result<Thread, String> {
+  let mut st = load();
+  let t = st.threads.iter_mut().find(|t| t.id == thread_id).ok_or("thread not found")?;
+  match action.as_str() {
+    "postpone" => { let now = integrations::now_iso(); t.next_followup_at = Some(add_days(&now, days.max(1))); }
+    "stop" => { t.next_followup_at = None; t.max_followups = t.followup_count; }
+    "close" => { t.next_followup_at = None; t.status = "closed".into(); }
+    _ => return Err("unknown action".into()),
+  }
+  let out = t.clone();
+  save(st)?;
+  Ok(out)
 }

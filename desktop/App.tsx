@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { siAnthropic, siGooglegemini, siMistralai, siOpenrouter } from 'simple-icons';
-import { Activity, BarChart3, Bot, Check, ChevronRight, Compass, Copy, Download, ExternalLink, History, Inbox, KeyRound, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
+import { Activity, BarChart3, Bot, Check, ChevronRight, Compass, Copy, Download, ExternalLink, FileText, History, Inbox, KeyRound, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
 import {
   AppShell,
   Btn,
@@ -31,6 +31,7 @@ import {
 
 
 type T = (en: string, ar: string) => string;
+const TAB = { dashboard: 0, leads: 1, crm: 2, campaigns: 3, outreach: 4, templates: 5, research: 6, agents: 7, integrations: 8, history: 9, settings: 10 } as const;
 
 export default function DesktopApp() {
   const { dark, toggleDark, lang, toggleLang, rtl, t } = useTheme();
@@ -44,9 +45,9 @@ export default function DesktopApp() {
   const [guideStep, setGuideStep] = useState(0);
   const [guideHidden, setGuideHidden] = useState(false);
   const endDemo = async () => { try { await invoke('workspace_demo_clear'); } finally { setGuideHidden(true); setGuideStep(0); setTab(0); await reloadWs(); } };
-  const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? 5 : 1); };
+  const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? TAB.research : TAB.leads); };
   const [outreachSeed, setOutreachSeed] = useState<Lead[] | null>(null);
-  const sendToOutreach = (leads: Lead[]) => { setOutreachSeed(leads); setTab(4); };
+  const sendToOutreach = (leads: Lead[]) => { setOutreachSeed(leads); setTab(TAB.outreach); };
   const [agentic, setAgentic] = useState(() => localStorage.getItem('orbit.agenticMode') !== 'off');
   const [connected, setConnected] = useState<string[]>(() => JSON.parse(localStorage.getItem('orbit.connected') || '[]'));
 
@@ -59,6 +60,7 @@ export default function DesktopApp() {
         { label: t('CRM', 'إدارة العملاء'), icon: Users },
         { label: t('Campaigns', 'الحملات'), icon: Send },
         { label: t('Outreach', 'التواصل'), icon: MessageSquare },
+        { label: t('Templates', 'القوالب'), icon: FileText },
         { label: t('Market Research', 'أبحاث السوق'), icon: Compass },
         { label: t('AI Agents', 'وكلاء الذكاء الاصطناعي'), icon: Bot },
         { label: t('Integrations', 'التكاملات'), icon: Plug },
@@ -90,18 +92,19 @@ export default function DesktopApp() {
         </>
       }
       aiLabel={t('Get AI Insight', 'رؤية ذكية')}
-      onAi={() => setTab(6)}
+      onAi={() => setTab(TAB.agents)}
     >
       {tab === 0 && <Dashboard t={t} go={setTab} ws={ws} />}
       {tab === 1 && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
       {tab === 2 && <Module t={t} title={t('CRM', 'إدارة العملاء')} icon={Users} action={t('Add contact', 'إضافة جهة اتصال')} />}
       {tab === 3 && <Module t={t} title={t('Campaigns', 'الحملات')} icon={Send} action={t('Create campaign', 'إنشاء حملة')} />}
       {tab === 4 && <Outreach t={t} seed={outreachSeed} onSeeded={() => setOutreachSeed(null)} />}
-      {tab === 5 && <LeadFinder t={t} mode="research" openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
-      {tab === 6 && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
-      {tab === 7 && <Integrations t={t} connected={connected} setConnected={setConnected} />}
-      {tab === 8 && <HistoryPage t={t} onOpen={openSavedRun} />}
-      {tab === 9 && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
+      {tab === TAB.templates && <TemplatesPage t={t} />}
+      {tab === TAB.research && <LeadFinder t={t} mode="research" openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
+      {tab === TAB.agents && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
+      {tab === TAB.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
+      {tab === TAB.history && <HistoryPage t={t} onOpen={openSavedRun} />}
+      {tab === TAB.settings && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
     </AppShell>
       {ws && !ws.workspace.onboarding.completed && <Onboarding t={t} ws={ws} done={reloadWs} />}
       {ws?.workspace.onboarding.completed && ws.workspace.demo && !guideHidden && <Guide t={t} step={guideStep} setStep={setGuideStep} go={setTab} openRun={(id) => setOpenRun(id)} finish={endDemo} hide={() => setGuideHidden(true)} />}
@@ -113,7 +116,7 @@ export default function DesktopApp() {
 function Dashboard({ t, go, ws }: { t: T; go: (i: number) => void; ws: WsSummary | null }) {
   const p = ws?.progress;
   const name = ws?.workspace.profile.name?.split(' ')[0];
-  const goFor: Record<string, number> = { profile: 9, email: 7, inbox: 7, llm: 6, style: 4, leads: 1, research: 5, outreach: 4, reply: 4 };
+  const goFor: Record<string, number> = { profile: TAB.settings, email: TAB.integrations, inbox: TAB.integrations, llm: TAB.agents, style: TAB.outreach, leads: TAB.leads, research: TAB.research, outreach: TAB.outreach, reply: TAB.outreach };
   return (
     <>
       <PageHead
@@ -151,7 +154,7 @@ function Dashboard({ t, go, ws }: { t: T; go: (i: number) => void; ws: WsSummary
           <Tile title={t('Follow-ups', 'المتابعات')} big={String(p?.followups || 0)} left={t(`${p?.replied || 0} replied`, `${p?.replied || 0} ردّوا`)} right={p?.style_learned ? t('style learned', 'الأسلوب مُتعلَّم') : t('style not learned', 'الأسلوب غير مُتعلَّم')} progress={p?.sent ? ((p.replied || 0) / p.sent) * 100 : 0} />
         </Card>
         <Card>
-          <CardHead title={t('Recent activity', 'النشاط الأخير')} action={<ViewAll label={t('All', 'الكل')} onClick={() => go(9)} />} />
+          <CardHead title={t('Recent activity', 'النشاط الأخير')} action={<ViewAll label={t('All', 'الكل')} onClick={() => go(TAB.settings)} />} />
           {ws?.workspace.activity.length ? ws.workspace.activity.slice(-6).reverse().map((x, i) => (
             <Row key={i} icon={x.kind === 'outreach' ? Send : x.kind === 'research' ? Compass : x.kind === 'integration' ? Plug : Activity} title={x.text} meta={new Date(x.at).toLocaleString()} />
           )) : <EmptyState icon={Activity} title={t('No activity yet', 'لا يوجد نشاط بعد')} text={t('Runs, sends, replies and connections show up here.', 'عمليات البحث والإرسال والردود والاتصالات تظهر هنا.')} />}
@@ -811,10 +814,12 @@ function HistoryPage({ t, onOpen }: { t: T; onOpen: (id: string, mode: string) =
   );
 }
 
-type OMsg = { id: string; direction: 'out' | 'in'; subject: string; body: string; at: string; provider?: string | null; step: number; external_id?: string | null };
+type OMsg = { id: string; direction: 'out' | 'in'; subject: string; body: string; at: string; provider?: string | null; step: number; external_id?: string | null; template_id?: string | null; variant_id?: string | null };
+type OVariant = { id: string; label: string; subject: string; body: string; angle?: string };
+type OTemplate = { id: string; name: string; subject: string; body: string; variants: OVariant[]; created_at: string; updated_at: string; in_rotation?: boolean };
 type OThread = { id: string; lead_id?: string | null; name: string; company?: string | null; email: string; status: string; messages: OMsg[]; followup_count: number; max_followups: number; interval_days: number; next_followup_at?: string | null; last_activity: string; sequence_id?: string | null; lead?: Lead | null; notes?: string | null; unread: boolean };
 type OStep = { delay_days: number; subject: string; body: string };
-type OState = { threads: OThread[]; sequences: { id: string; name: string; steps: OStep[] }[]; style: { samples: string[]; guide: string; signature: string; learned: { draft: string; final_text: string; at: string }[]; language: string }; settings: { send_via: string; auto_followup: boolean; default_max_followups: number; default_interval_days: number }; updated_at: string };
+type OState = { threads: OThread[]; sequences: { id: string; name: string; steps: OStep[] }[]; style: { samples: string[]; guide: string; signature: string; learned: { draft: string; final_text: string; at: string }[]; language: string }; settings: { send_via: string; auto_followup: boolean; default_max_followups: number; default_interval_days: number; default_template_id?: string | null; variant_mode: string }; updated_at: string; templates: OTemplate[] };
 
 const STATUS_TONE: Record<string, Tone> = { draft: 'neutral', sent: 'violet', followup_due: 'orange', replied: 'green', closed: 'neutral', bounced: 'coral' };
 
@@ -834,7 +839,10 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [draftRef, setDraftRef] = useState('');
-  const [panel, setPanel] = useState<'none' | 'style' | 'sequence' | 'lead'>('none');
+  const [used, setUsed] = useState<{ template_id?: string; variant_id?: string; variant_label?: string } | null>(null);
+  const [variantPick, setVariantPick] = useState('auto');
+  const [panel, setPanel] = useState<'none' | 'style' | 'sequence' | 'lead' | 'followups'>('none');
+  const [queue, setQueue] = useState<Record<string, { subject: string; body: string; step: number; source: string }>>({});
   const [samples, setSamples] = useState<string[]>(['', '', '']);
   const [signature, setSignature] = useState('');
   const [lang, setLang] = useState('en');
@@ -872,13 +880,22 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
   const nextStep = (x: OThread) => x.messages.filter((m) => m.direction === 'out').length + 1;
 
   const act = async (k: string, fn: () => Promise<string | void>) => { setBusy(k); setMsg(null); try { const r = await fn(); if (r) setMsg({ tone: 'green', text: r }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const autofill = (x: OThread) => act('fill', async () => { const r = await invoke<{ subject: string; body: string; template_id: string; variant_id: string; variant_label: string }>('outreach_fill', { threadId: x.id, templateId: st?.settings.default_template_id ?? null, variantId: variantPick === 'auto' ? null : variantPick }); setSubject(r.subject); setBody(r.body); setDraftRef(''); setUsed(r); return t(`Template auto-filled (${r.variant_label}). Review and send.`, `تم ملء القالب تلقائياً (${r.variant_label}). راجع وأرسل.`); });
+  const fillAndSendDrafts = () => act('bulk', async () => {
+    const s = await load(); if (!s) return;
+    const drafts = s.threads.filter((x) => x.status === 'draft' && x.email);
+    let n = 0;
+    for (const x of drafts) { const r = await invoke<{ subject: string; body: string; template_id: string; variant_id: string }>('outreach_fill', { threadId: x.id, templateId: s.settings.default_template_id ?? null, variantId: null }); await invoke('outreach_send', { threadId: x.id, subject: r.subject, body: r.body, step: 1, templateId: r.template_id, variantId: r.variant_id }); n++; }
+    await load(); void invoke('workspace_log', { kind: 'outreach', text: `Auto-filled template and sent first email to ${n} contacts` });
+    return t(`${n} first emails sent from the template`, `تم إرسال ${n} رسالة أولى من القالب`);
+  });
   const draft = (x: OThread, step = nextStep(x)) => act('draft', async () => { const d = await invoke<{ subject: string; body: string }>('outreach_draft', { threadId: x.id, step }); setSubject(d.subject); setBody(d.body); setDraftRef(d.body); return t(`Draft for step ${step} ready in your style. Edit freely, the model learns from your changes.`, `المسودة للخطوة ${step} جاهزة بأسلوبك. عدّل بحرية، النموذج يتعلم من تعديلاتك.`); });
   const send = (x: OThread) => act('send', async () => {
     if (!subject.trim() || !body.trim()) throw new Error(t('Subject and body are required', 'العنوان والمحتوى مطلوبان'));
     const step = nextStep(x);
     if (draftRef) await invoke('outreach_record_edit', { draft: draftRef, finalText: body });
-    await invoke<OThread>('outreach_send', { threadId: x.id, subject, body, step });
-    setSubject(''); setBody(''); setDraftRef('');
+    await invoke<OThread>('outreach_send', { threadId: x.id, subject, body, step, templateId: used?.template_id ?? null, variantId: used?.variant_id ?? null });
+    setSubject(''); setBody(''); setDraftRef(''); setUsed(null);
     await load();
     void invoke('workspace_log', { kind: 'outreach', text: `Sent step ${step} to ${x.name} <${x.email}>` });
     return t(`Sent to ${x.email} (step ${step})`, `تم الإرسال إلى ${x.email} (الخطوة ${step})`);
@@ -896,6 +913,16 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
     await load();
     return t(`${n} follow-ups sent`, `تم إرسال ${n} متابعة`);
   });
+  const prepareQueue = async () => {
+    const s = await load(); if (!s) return;
+    const due = s.threads.filter(isDue);
+    const next: Record<string, { subject: string; body: string; step: number; source: string }> = { ...queue };
+    for (const x of due) { if (next[x.id]) continue; try { const r = await invoke<{ subject: string; body: string; step: number }>('outreach_fill_step', { threadId: x.id, step: nextStep(x) }); next[x.id] = { ...r, source: 'template' }; } catch { /* skip */ } }
+    setQueue(next);
+  };
+  const queueDraftAi = (x: OThread) => act('qdraft-' + x.id, async () => { const d = await invoke<{ subject: string; body: string }>('outreach_draft', { threadId: x.id, step: nextStep(x) }); setQueue((q) => ({ ...q, [x.id]: { subject: d.subject, body: d.body, step: nextStep(x), source: 'ai' } })); return t(`AI draft ready for ${x.name}`, `مسودة الذكاء الاصطناعي جاهزة لـ ${x.name}`); });
+  const queueSend = (x: OThread) => act('qsend-' + x.id, async () => { const q = queue[x.id]; if (!q) throw new Error('no draft'); await invoke('outreach_send', { threadId: x.id, subject: q.subject, body: q.body, step: q.step, templateId: null, variantId: null }); setQueue((qq) => { const c = { ...qq }; delete c[x.id]; return c; }); await load(); void invoke('workspace_log', { kind: 'outreach', text: `Approved follow-up ${q.step - 1} to ${x.name}` }); return t(`Follow-up sent to ${x.email}`, `تم إرسال المتابعة إلى ${x.email}`); });
+  const queueAction = (x: OThread, action: 'postpone' | 'stop' | 'close') => act('qact-' + x.id, async () => { await invoke('outreach_followup_action', { threadId: x.id, action, days: 2 }); setQueue((qq) => { const c = { ...qq }; delete c[x.id]; return c; }); await load(); return action === 'postpone' ? t(`Postponed 2 days: ${x.name}`, `تم التأجيل يومين: ${x.name}`) : action === 'stop' ? t(`Sequence stopped for ${x.name}`, `تم إيقاف التسلسل لـ ${x.name}`) : t(`Closed: ${x.name}`, `تم الإغلاق: ${x.name}`); });
   const sync = () => act('sync', async () => { const r = await invoke<{ found: number; errors: string[] }>('outreach_sync'); await load(); if (r.found) void invoke('workspace_log', { kind: 'outreach', text: `${r.found} new replies synced from inbox` }); return t(`${r.found} new replies${r.errors.length ? ` · ${r.errors[0]}` : ''}`, `${r.found} رد جديد${r.errors.length ? ` · ${r.errors[0]}` : ''}`); });
   const learn = () => act('learn', async () => { const s = await invoke<OState>('outreach_learn_style', { samples: samples.filter((x) => x.trim()), signature, language: lang }); setSt(s); void invoke('workspace_log', { kind: 'style', text: 'Writing style learned from samples' }); return t('Style learned. New drafts will follow it.', 'تم تعلّم الأسلوب. المسودات الجديدة ستتبعه.'); });
   const update = (patch: Partial<OThread>) => { if (!st || !thread) return; void persist({ ...st, threads: st.threads.map((x) => (x.id === thread.id ? { ...x, ...patch } : x)) }); };
@@ -931,8 +958,9 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
         actions={
           <>
             <Btn variant="secondary" size="sm" icon={RefreshCw} onClick={sync} disabled={!!busy}>{busy === 'sync' ? t('Checking inbox…', 'جاري فحص الصندوق…') : t('Sync replies', 'مزامنة الردود')}</Btn>
-            <Btn size="sm" icon={Send} onClick={sendDue} disabled={!!busy || !counts.due}>{busy === 'due' ? t('Sending…', 'جاري الإرسال…') : t(`Send due follow-ups (${counts.due})`, `إرسال المتابعات المستحقة (${counts.due})`)}</Btn>
+            <Btn size="sm" icon={RefreshCw} onClick={() => { setPanel(panel === 'followups' ? 'none' : 'followups'); void prepareQueue(); }} disabled={!!busy || !counts.due}>{t(`Review due follow-ups (${counts.due})`, `مراجعة المتابعات المستحقة (${counts.due})`)}</Btn>
             <Btn variant="secondary" size="sm" icon={Sparkles} onClick={() => setPanel(panel === 'style' ? 'none' : 'style')}>{t('My writing style', 'أسلوبي في الكتابة')}</Btn>
+            {counts.drafts > 0 && st?.templates.length ? <Btn variant="ai" size="sm" icon={FileText} onClick={() => { if (window.confirm(t(`Auto-fill the template and send the first email to ${counts.drafts} draft contacts now?`, `ملء القالب وإرسال الرسالة الأولى إلى ${counts.drafts} جهة اتصال الآن؟`))) void fillAndSendDrafts(); }} disabled={!!busy}>{busy === 'bulk' ? t('Sending…', 'جاري الإرسال…') : t(`Fill & send ${counts.drafts} drafts`, `ملء وإرسال ${counts.drafts} مسودة`)}</Btn> : null}
           </>
         }
       />
@@ -947,7 +975,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
           </div>
         ); })}
         <div className="o-pipe-settings">
-          <label className="o-flex" style={{ fontSize: 12 }}>{t('Auto follow-ups', 'متابعة تلقائية')} <Switch on={!!st?.settings.auto_followup} onChange={(v) => setSettings({ auto_followup: v })} label="Auto follow-ups" /></label>
+          <label className="o-flex" style={{ fontSize: 12 }} title={t('When on, due follow-ups are sent without review every 10 minutes while Outreach is open', 'عند التفعيل تُرسل المتابعات المستحقة بدون مراجعة كل 10 دقائق أثناء فتح التواصل')}>{t('Auto follow-ups (no review)', 'متابعة تلقائية (بدون مراجعة)')} <Switch on={!!st?.settings.auto_followup} onChange={(v) => setSettings({ auto_followup: v })} label="Auto follow-ups" /></label>
           <label className="o-flex" style={{ fontSize: 12 }}>{t('Max', 'الحد')} <input className="o-input" style={{ height: 32, width: 56 }} type="number" min={0} max={8} value={st?.settings.default_max_followups || 3} onChange={(e) => setSettings({ default_max_followups: Number(e.target.value) || 0 })} /></label>
           <label className="o-flex" style={{ fontSize: 12 }}>{t('Every', 'كل')} <input className="o-input" style={{ height: 32, width: 56 }} type="number" min={1} max={30} value={st?.settings.default_interval_days || 3} onChange={(e) => setSettings({ default_interval_days: Number(e.target.value) || 1 })} /> {t('days', 'يوم')}</label>
         </div>
@@ -966,6 +994,34 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
         </Card>
       )}
 
+      {panel === 'followups' && (
+        <Card>
+          <CardHead title={t('Follow-ups awaiting your approval', 'متابعات بانتظار موافقتك')} sub={t('Each one is pre-filled from your sequence step. Edit, draft with AI, then approve. Nothing is sent without your click unless auto follow-ups is on.', 'كل واحدة مملوءة مسبقاً من خطوة التسلسل. عدّل، أو اصنع مسودة بالذكاء الاصطناعي، ثم وافق. لا يُرسل شيء بدون ضغطتك إلا إذا كانت المتابعة التلقائية مفعّلة.')} action={<Btn variant="ghost" size="sm" onClick={() => setPanel('none')}>{t('Close', 'إغلاق')}</Btn>} />
+          {(st?.threads || []).filter(isDue).length ? (st?.threads || []).filter(isDue).map((x) => { const q = queue[x.id]; return (
+            <div key={x.id} className="o-queue-item">
+              <div className="o-between">
+                <div className="o-flex"><b>{x.name}</b><span className="o-muted" style={{ fontSize: 12 }}>{x.company ? `${x.company} · ` : ''}{x.email}</span><Chip tone="orange">{t(`Follow-up ${nextStep(x) - 1} of ${x.max_followups}`, `متابعة ${nextStep(x) - 1} من ${x.max_followups}`)}</Chip>{q && <Chip tone={q.source === 'ai' ? 'violet' : 'neutral'}>{q.source === 'ai' ? t('AI draft', 'مسودة ذكية') : t('from sequence', 'من التسلسل')}</Chip>}</div>
+                <div className="o-flex">
+                  <Btn variant="ghost" size="sm" onClick={() => queueAction(x, 'postpone')} disabled={!!busy}>{t('Postpone 2d', 'تأجيل يومين')}</Btn>
+                  <Btn variant="ghost" size="sm" onClick={() => queueAction(x, 'stop')} disabled={!!busy}>{t('Stop sequence', 'إيقاف التسلسل')}</Btn>
+                  <Btn variant="ghost" size="sm" onClick={() => queueAction(x, 'close')} disabled={!!busy}>{t('Close', 'إغلاق')}</Btn>
+                </div>
+              </div>
+              {q ? (
+                <>
+                  <input className="o-input" aria-label="Subject" value={q.subject} onChange={(e) => setQueue({ ...queue, [x.id]: { ...q, subject: e.target.value } })} />
+                  <textarea className="o-input o-composer-body" aria-label="Body" rows={5} value={q.body} onChange={(e) => setQueue({ ...queue, [x.id]: { ...q, body: e.target.value } })} />
+                  <div className="o-flex">
+                    <Btn variant="ai" size="sm" icon={Sparkles} onClick={() => queueDraftAi(x)} disabled={!!busy}>{busy === 'qdraft-' + x.id ? t('Drafting…', 'جاري الصياغة…') : t('Draft with AI in my style', 'مسودة بالذكاء الاصطناعي بأسلوبي')}</Btn>
+                    <span style={{ flex: 1 }} />
+                    <Btn size="sm" icon={Send} onClick={() => queueSend(x)} disabled={!!busy || !q.subject.trim() || !q.body.trim()}>{busy === 'qsend-' + x.id ? t('Sending…', 'جاري الإرسال…') : t('Approve & send', 'موافقة وإرسال')}</Btn>
+                  </div>
+                </>
+              ) : <p className="o-note">{t('Preparing…', 'جاري التجهيز…')}</p>}
+            </div>
+          ); }) : <EmptyState icon={Check} title={t('Nothing due', 'لا شيء مستحق')} text={t('Follow-ups appear here on their scheduled day.', 'المتابعات تظهر هنا في يومها المجدول.')} />}
+        </Card>
+      )}
       <div className="o-chat">
         <aside className="o-chat-list">
           <div className="o-chat-search"><Search size={15} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('Search contacts…', 'ابحث في جهات الاتصال…')} /></div>
@@ -1046,6 +1102,17 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
                 <footer className="o-composer">
                   <div className="o-flex" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
                     <Btn variant="ai" size="sm" icon={Sparkles} onClick={() => draft(thread)} disabled={!!busy}>{busy === 'draft' ? t('Drafting…', 'جاري الصياغة…') : t(`Draft step ${nextStep(thread)} in my style`, `صياغة الخطوة ${nextStep(thread)} بأسلوبي`)}</Btn>
+                    {nextStep(thread) === 1 && (st?.templates.find((x) => x.id === st.settings.default_template_id) || st?.templates[0]) && (
+                      <>
+                        <Btn size="sm" icon={FileText} onClick={() => autofill(thread)} disabled={!!busy}>{busy === 'fill' ? '…' : t('Auto-fill template', 'ملء القالب تلقائياً')}</Btn>
+                        <select className="o-input" aria-label="Variant" style={{ height: 32 }} value={variantPick} onChange={(e) => setVariantPick(e.target.value)}>
+                          <option value="auto">{t('Variant: auto (rotate)', 'النسخة: تلقائي (تناوب)')}</option>
+                          <option value="base">{t('Base', 'الأساسية')}</option>
+                          {(st?.templates.find((x) => x.id === st.settings.default_template_id) || st?.templates[0])?.variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                        </select>
+                      </>
+                    )}
+                    {used && <Chip tone="violet">{t('template', 'قالب')} · {used.variant_label}</Chip>}
                     <Chip tone="neutral">{t('via SMTP', 'عبر SMTP')}</Chip>
                     {draftRef && body !== draftRef && <Chip tone="green">{t('Your edits will be learned', 'تعديلاتك ستُتعلَّم')}</Chip>}
                   </div>
@@ -1319,11 +1386,12 @@ function Guide({ t, step, setStep, go, openRun, finish, hide }: { t: T; step: nu
     { title: t('Dashboard', 'لوحة التحكم'), text: t('Your setup checklist, live pipeline numbers and recent activity. Each checklist item jumps to the screen that completes it.', 'قائمة الإعداد وأرقام خط الأنابيب الحية والنشاط الأخير. كل عنصر في القائمة ينقلك للشاشة التي تكمله.'), tab: 0, place: 'bottom' },
     { title: t('Lead Finder', 'البحث عن العملاء'), text: t('Describe a persona, set a target, and results stream in live through Agent Reach. This sample run holds 8 leads with company facts, published emails and a stable ORB id. Click any row to open its identity card.', 'صف شخصية، حدد العدد، وتصل النتائج لحظياً عبر Agent Reach. هذه العملية التجريبية فيها 8 عملاء ببيانات الشركة والإيميلات المنشورة ومعرّف ORB ثابت. اضغط أي صف لفتح بطاقة الهوية.'), tab: 1, run: 'demo-leads', place: 'bottom' },
     { title: t('Enrich and export', 'الإثراء والتصدير'), text: t('“Enrich” reads each company site and LinkedIn page for logos, photos and published emails. Every run is exported to Excel in Documents\\orbit and saved to History automatically.', '“الإثراء” يقرأ موقع كل شركة وصفحة LinkedIn للشعارات والصور والإيميلات المنشورة. كل عملية تُصدَّر إلى Excel في Documents\\orbit وتُحفظ في السجل تلقائياً.'), tab: 1, place: 'bottom' },
-    { title: t('Market Research', 'أبحاث السوق'), text: t('Same engine, different angles: reports, competitors, news, funding. Rows are typed (company, article, page) with Markdown notes.', 'نفس المحرك بزوايا مختلفة: تقارير، منافسون، أخبار، تمويل. الصفوف مصنّفة (شركة، مقال، صفحة) مع ملاحظات Markdown.'), tab: 5, run: 'demo-research', place: 'bottom' },
+    { title: t('Market Research', 'أبحاث السوق'), text: t('Same engine, different angles: reports, competitors, news, funding. Rows are typed (company, article, page) with Markdown notes.', 'نفس المحرك بزوايا مختلفة: تقارير، منافسون، أخبار، تمويل. الصفوف مصنّفة (شركة، مقال، صفحة) مع ملاحظات Markdown.'), tab: TAB.research, run: 'demo-research', place: 'bottom' },
     { title: t('Outreach', 'التواصل'), text: t('A WhatsApp-style inbox. Sara already replied, Omar is on follow-up 1 and due today, Layla was sent this morning, two are drafts. Open a thread to see the stepper, the sequence and the composer.', 'صندوق بأسلوب واتساب. سارة ردّت بالفعل، عمر في المتابعة 1 ومستحق اليوم، ليلى أُرسل لها صباح اليوم، واثنان مسودات. افتح محادثة لترى الخطوات والتسلسل والمحرر.'), tab: 4, place: 'bottom' },
     { title: t('Your writing style', 'أسلوبك في الكتابة'), text: t('Click “My writing style”, paste a few emails you wrote, and Learn. Drafts then follow your tone, and every edit you make before sending is learned too. “Send due follow-ups” handles the rest.', 'اضغط “أسلوبي في الكتابة”، الصق رسائل كتبتها، ثم تعلّم. المسودات تتبع نبرتك بعدها، وكل تعديل قبل الإرسال يُتعلَّم أيضاً. “إرسال المتابعات المستحقة” يتكفل بالباقي.'), tab: 4, place: 'bottom' },
-    { title: t('Integrations', 'التكاملات'), text: t('Gmail via app password (SMTP + IMAP), any SMTP server, signed webhooks, Agent Reach health, and LLM provider keys. Passwords and keys live only in Windows Credential Manager.', 'Gmail بكلمة مرور تطبيق (SMTP + IMAP)، أي خادم SMTP، webhooks موقّعة، صحة Agent Reach، ومفاتيح مزوّدي النماذج. كلمات المرور والمفاتيح في Windows Credential Manager فقط.'), tab: 7, place: 'bottom' },
-    { title: t('History and Settings', 'السجل والإعدادات'), text: t('History keeps every run to reopen later. Settings holds your profile, notes, activity, backups, and a Delete button for every dataset.', 'السجل يحتفظ بكل عملية لإعادة فتحها. الإعدادات فيها ملفك وملاحظاتك ونشاطك والنسخ الاحتياطية وزر حذف لكل مجموعة بيانات.'), tab: 8, place: 'bottom' },
+    { title: t('Templates', 'القوالب'), text: t('Write your first email once, in your own words, with placeholders like {{first_name}} and {{company}}. Generate 3–5 variants in your style, then Outreach auto-fills them for every lead and tracks which variant gets replies.', 'اكتب رسالتك الأولى مرة واحدة بكلماتك مع placeholders مثل {{first_name}} و{{company}}. ولّد 3–5 نسخ بأسلوبك، ثم يملؤها التواصل تلقائياً لكل عميل ويتتبع أي نسخة تجلب الردود.'), tab: TAB.templates, place: 'bottom' },
+    { title: t('Integrations', 'التكاملات'), text: t('Gmail via app password (SMTP + IMAP), any SMTP server, signed webhooks, Agent Reach health, and LLM provider keys. Passwords and keys live only in Windows Credential Manager.', 'Gmail بكلمة مرور تطبيق (SMTP + IMAP)، أي خادم SMTP، webhooks موقّعة، صحة Agent Reach، ومفاتيح مزوّدي النماذج. كلمات المرور والمفاتيح في Windows Credential Manager فقط.'), tab: TAB.integrations, place: 'bottom' },
+    { title: t('History and Settings', 'السجل والإعدادات'), text: t('History keeps every run to reopen later. Settings holds your profile, notes, activity, backups, and a Delete button for every dataset.', 'السجل يحتفظ بكل عملية لإعادة فتحها. الإعدادات فيها ملفك وملاحظاتك ونشاطك والنسخ الاحتياطية وزر حذف لكل مجموعة بيانات.'), tab: TAB.history, place: 'bottom' },
     { title: t('Ready?', 'جاهز؟'), text: t('Click the button and all sample data is deleted immediately. Your workspace starts clean with the profile you entered.', 'اضغط الزر وتُحذف كل البيانات التجريبية فوراً. تبدأ مساحتك نظيفة بالملف الذي أدخلته.'), tab: 0, place: 'center' },
   ];
   const s = steps[Math.min(step, steps.length - 1)];
@@ -1351,5 +1419,107 @@ function Guide({ t, step, setStep, go, openRun, finish, hide }: { t: T; step: nu
         </div>
       </div>
     </div>
+  );
+}
+
+/** Templates: the user's base first email with placeholders, generated variants, and per-variant reply stats. */
+function TemplatesPage({ t }: { t: T }) {
+  const [st, setSt] = useState<OState | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const [placeholders, setPlaceholders] = useState<[string, string][]>([]);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const [count, setCount] = useState(4);
+  const [preview, setPreview] = useState<{ subject: string; body: string; variant_label: string } | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const load = async () => { try { const s = await invoke<OState>('outreach_state'); setSt(s); if (!sel && s.templates[0]) setSel(s.settings.default_template_id || s.templates[0].id); setPlaceholders(await invoke<[string, string][]>('outreach_placeholders')); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
+  /* oxlint-disable react/react-compiler -- load once */
+  useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const persist = async (s: OState) => { try { setSt(await invoke<OState>('outreach_save', { state: s })); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
+  const act = async (k: string, fn: () => Promise<string>) => { setBusy(k); setMsg(null); try { setMsg({ tone: 'green', text: await fn() }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const tpl = st?.templates.find((x) => x.id === sel) || null;
+  const update = (patch: Partial<OTemplate>) => { if (!st || !tpl) return; void persist({ ...st, templates: st.templates.map((x) => (x.id === tpl.id ? { ...x, ...patch, updated_at: new Date().toISOString() } : x)) }); };
+  const create = () => { if (!st) return; const id = `tpl-${Date.now()}`; const now = new Date().toISOString(); const fresh: OTemplate = { id, name: t('First email', 'الرسالة الأولى'), subject: t('Quick question about {{company}}', 'سؤال سريع عن {{company}}'), body: t('Hi {{first_name}},\n\n\n\n{{signature}}', 'مرحباً {{first_name}}،\n\n\n\n{{signature}}'), variants: [], created_at: now, updated_at: now, in_rotation: true }; void persist({ ...st, templates: [...st.templates, fresh], settings: { ...st.settings, default_template_id: st.settings.default_template_id || id } }); setSel(id); };
+  const remove = (id: string) => { if (!st) return; void persist({ ...st, templates: st.templates.filter((x) => x.id !== id), settings: { ...st.settings, default_template_id: st.settings.default_template_id === id ? null : st.settings.default_template_id } }); setSel(null); };
+  const insert = (token: string) => { const el = bodyRef.current; if (!el || !tpl) { update({ body: (tpl?.body || '') + token }); return; } const s0 = el.selectionStart ?? el.value.length; const e0 = el.selectionEnd ?? s0; const body = el.value.slice(0, s0) + token + el.value.slice(e0); update({ body }); requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s0 + token.length, s0 + token.length); }); };
+  const generate = () => tpl && act('gen', async () => { const s = await invoke<OState>('outreach_generate_variants', { templateId: tpl.id, count }); setSt(s); void invoke('workspace_log', { kind: 'outreach', text: `Generated ${s.templates.find((x) => x.id === tpl.id)?.variants.length || 0} template variants` }); return t('Variants generated in your style. Edit any of them, then Outreach rotates between them.', 'تم توليد النسخ بأسلوبك. عدّل أياً منها، ثم يتناوب التواصل بينها.'); });
+  const previewFor = (variantId: string) => tpl && act('preview', async () => { const th = st?.threads[0]; if (!th) throw new Error(t('Add at least one contact in Outreach to preview with real data.', 'أضف جهة اتصال واحدة على الأقل في التواصل للمعاينة ببيانات حقيقية.')); const r = await invoke<{ subject: string; body: string; variant_label: string }>('outreach_fill', { threadId: th.id, templateId: tpl.id, variantId }); setPreview(r); return t(`Preview filled with ${th.name}`, `معاينة مملوءة ببيانات ${th.name}`); });
+  const stats = (variantId: string) => { const outs = (st?.threads || []).flatMap((th) => th.messages.filter((m) => m.direction === 'out' && m.step === 1 && (m.variant_id || 'base') === variantId).map(() => th)); const sent = outs.length; const replied = outs.filter((th) => th.status === 'replied').length; return { sent, replied }; };
+  const setDefault = (id: string) => { if (!st) return; void persist({ ...st, settings: { ...st.settings, default_template_id: id } }); };
+  const setMode = (mode: string) => { if (!st) return; void persist({ ...st, settings: { ...st.settings, variant_mode: mode } }); };
+  return (
+    <>
+      <PageHead eyebrow={t('Email templates', 'قوالب البريد')} title={t('Templates', 'القوالب')} spark={false} sub={t('Write your first email once, in your own words. Placeholders fill in per lead. Generate variants in your style and let Outreach rotate them, then keep the one that gets replies.', 'اكتب رسالتك الأولى مرة واحدة بكلماتك. الـ placeholders تُملأ لكل عميل. ولّد نسخاً بأسلوبك ودع التواصل يتناوب بينها، ثم احتفظ بالتي تجلب الردود.')} actions={<Btn icon={FileText} onClick={create} disabled={!st}>{t('New template', 'قالب جديد')}</Btn>} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
+      <div className="o-tpl">
+        <aside className="o-tpl-list">
+          {(st?.templates || []).map((x) => (
+            <button key={x.id} className={`o-history-item${sel === x.id ? ' active' : ''}`} onClick={() => setSel(x.id)}>
+              <b>{x.name}{st?.settings.default_template_id === x.id ? ' ★' : ''}</b>
+              <small>{x.variants.length} {t('variants', 'نسخة')} · {new Date(x.updated_at).toLocaleDateString()}</small>
+            </button>
+          ))}
+          {!st?.templates.length && <EmptyState icon={FileText} title={t('No template yet', 'لا يوجد قالب بعد')} text={t('Create one and write your first email the way you would send it today.', 'أنشئ واحداً واكتب رسالتك الأولى كما سترسلها اليوم.')} action={<Btn size="sm" onClick={create}>{t('New template', 'قالب جديد')}</Btn>} />}
+          {st && st.templates.length > 0 && (
+            <div className="o-tpl-mode">
+              <small>{t('Variant rotation', 'تناوب النسخ')}</small>
+              <select className="o-input" aria-label="Variant mode" style={{ height: 32 }} value={st.settings.variant_mode} onChange={(e) => setMode(e.target.value)}><option value="rotate">{t('Rotate templates + variants (A/B)', 'تناوب القوالب والنسخ (A/B)')}</option><option value="base">{t('Always base', 'الأساسية دائماً')}</option></select>
+            </div>
+          )}
+        </aside>
+        <section className="o-tpl-editor">
+          {tpl ? (
+            <>
+              <div className="o-flex" style={{ flexWrap: 'wrap' }}>
+                <input className="o-input" aria-label="Template name" style={{ height: 36, flex: 1, minWidth: 200, fontWeight: 600 }} value={tpl.name} onChange={(e) => update({ name: e.target.value })} />
+                {st?.settings.default_template_id !== tpl.id ? <Btn variant="secondary" size="sm" onClick={() => setDefault(tpl.id)}>{t('Set as default', 'اجعله الافتراضي')}</Btn> : <Chip tone="green">{t('Default for Outreach', 'الافتراضي للتواصل')}</Chip>}
+                <label className="o-flex" style={{ fontSize: 12 }}>{t('In bulk rotation', 'ضمن التوزيع الجماعي')} <Switch on={tpl.in_rotation !== false} onChange={(v) => update({ in_rotation: v })} label="In rotation" /></label>
+                <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => remove(tpl.id)}>{t('Delete', 'حذف')}</Btn>
+              </div>
+              <Card>
+                <CardHead title={t('Base email (your words)', 'الرسالة الأساسية (بكلماتك)')} sub={t('Click a placeholder to insert it at the cursor. It is replaced per lead from the identity card and your profile.', 'اضغط placeholder لإدراجه عند المؤشر. يُستبدل لكل عميل من بطاقة الهوية وملفك.')} />
+                <div className="o-tokens">{placeholders.map(([k, d]) => <button key={k} className="o-token" title={d} onClick={() => insert(k)}>{k}</button>)}</div>
+                <label className="o-field" style={{ marginTop: 10 }}>{t('Subject', 'الموضوع')}<input value={tpl.subject} onChange={(e) => update({ subject: e.target.value })} /></label>
+                <label className="o-field" style={{ marginTop: 10 }}>{t('Body', 'المحتوى')}<textarea ref={bodyRef} rows={10} value={tpl.body} onChange={(e) => update({ body: e.target.value })} style={{ fontFamily: 'var(--font-sans)' }} /></label>
+                <div className="o-flex o-mt" style={{ flexWrap: 'wrap' }}>
+                  <Btn variant="ai" icon={Sparkles} onClick={generate} disabled={!!busy || !tpl.body.trim()}>{busy === 'gen' ? t('Generating…', 'جاري التوليد…') : t(`Generate ${count} variants in my style`, `توليد ${count} نسخ بأسلوبي`)}</Btn>
+                  <select className="o-input" aria-label="Variant count" style={{ height: 34, width: 70 }} value={count} onChange={(e) => setCount(Number(e.target.value))}>{[3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select>
+                  <Btn variant="secondary" size="sm" onClick={() => previewFor('base')} disabled={!!busy}>{t('Preview with a real contact', 'معاينة بجهة اتصال حقيقية')}</Btn>
+                  {(() => { const s = stats('base'); return <Chip tone="neutral">{t('Base', 'الأساسية')} · {s.sent} {t('sent', 'مُرسل')} · {s.replied} {t('replied', 'ردّوا')}</Chip>; })()}
+                </div>
+              </Card>
+              {preview && (
+                <Card>
+                  <CardHead title={t('Preview', 'معاينة')} sub={preview.variant_label} action={<Btn variant="ghost" size="sm" onClick={() => setPreview(null)}>{t('Close', 'إغلاق')}</Btn>} />
+                  <b>{preview.subject}</b>
+                  <pre className="o-pre" style={{ font: '13px/1.6 var(--font-sans)', color: 'var(--text)', background: 'var(--surface-2)', maxHeight: 320 }}>{preview.body}</pre>
+                </Card>
+              )}
+              {tpl.variants.length > 0 && (
+                <Card>
+                  <CardHead title={t(`${tpl.variants.length} variants in your style`, `${tpl.variants.length} نسخ بأسلوبك`)} sub={t('Edit freely. Stats count first emails sent with each variant and how many got a reply.', 'عدّل بحرية. الإحصاءات تحسب الرسائل الأولى المرسلة بكل نسخة وكم منها حصل على رد.')} />
+                  <div className="o-variants">
+                    {tpl.variants.map((v) => { const s = stats(v.id); return (
+                      <div key={v.id} className="o-variant">
+                        <div className="o-flex" style={{ flexWrap: 'wrap' }}>
+                          <input className="o-input" aria-label="Variant label" style={{ height: 32, fontWeight: 600, flex: 1, minWidth: 140 }} value={v.label} onChange={(e) => update({ variants: tpl.variants.map((x) => (x.id === v.id ? { ...x, label: e.target.value } : x)) })} />
+                          <Chip tone={s.replied ? 'green' : 'neutral'}>{s.sent} {t('sent', 'مُرسل')} · {s.replied} {t('replied', 'ردّوا')}{s.sent ? ` · ${Math.round((s.replied / s.sent) * 100)}%` : ''}</Chip>
+                          <Btn variant="ghost" size="sm" onClick={() => previewFor(v.id)} disabled={!!busy}>{t('Preview', 'معاينة')}</Btn>
+                          <button className="o-more" aria-label="Delete variant" onClick={() => update({ variants: tpl.variants.filter((x) => x.id !== v.id) })}><Trash2 size={14} /></button>
+                        </div>
+                        {v.angle && <small className="o-muted">{v.angle}</small>}
+                        <input className="o-input" aria-label="Variant subject" style={{ height: 32 }} value={v.subject} onChange={(e) => update({ variants: tpl.variants.map((x) => (x.id === v.id ? { ...x, subject: e.target.value } : x)) })} />
+                        <textarea className="o-input" aria-label="Variant body" rows={7} style={{ height: 'auto', padding: 10, fontFamily: 'var(--font-sans)' }} value={v.body} onChange={(e) => update({ variants: tpl.variants.map((x) => (x.id === v.id ? { ...x, body: e.target.value } : x)) })} />
+                      </div>
+                    ); })}
+                  </div>
+                </Card>
+              )}
+            </>
+          ) : <EmptyState icon={FileText} title={t('Select or create a template', 'اختر أو أنشئ قالباً')} text="" />}
+        </section>
+      </div>
+    </>
   );
 }

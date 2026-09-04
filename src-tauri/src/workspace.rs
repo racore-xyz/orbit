@@ -205,7 +205,7 @@ pub fn demo_seed() -> Result<(), String> {
     outreach::Thread {
       id: id.into(), lead_id: lead.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()), name: lead["name"].as_str().unwrap_or("").into(), company: lead["company"].as_str().map(|s| s.to_string()),
       email: lead["emails"][0]["email"].as_str().unwrap_or("").into(), status: status.into(),
-      messages: msgs.iter().enumerate().map(|(i, (dir, subj, body, step, mins_ago))| outreach::Msg { id: format!("m-{}", i + 1), direction: dir.to_string(), subject: subj.to_string(), body: body.to_string(), at: integrations::iso_from_secs((base - mins_ago * 60).max(0) as u64), provider: if *dir == "out" { Some("demo".into()) } else { None }, step: *step, external_id: None }).collect(),
+      messages: msgs.iter().enumerate().map(|(i, (dir, subj, body, step, mins_ago))| outreach::Msg { id: format!("m-{}", i + 1), direction: dir.to_string(), subject: subj.to_string(), body: body.to_string(), at: integrations::iso_from_secs((base - mins_ago * 60).max(0) as u64), provider: if *dir == "out" { Some("demo".into()) } else { None }, step: *step, external_id: None, template_id: None, variant_id: None }).collect(),
       followup_count: followups, max_followups: 3, interval_days: 3, next_followup_at: next.map(|m| integrations::iso_from_secs((base + m * 60).max(0) as u64)), last_activity: now.clone(), sequence_id: Some("default".into()), lead: Some(lead.clone()), notes: None, unread: status == "replied",
     }
   };
