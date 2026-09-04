@@ -1,7 +1,7 @@
 'use client';
 import type { ReactNode } from 'react';
 import { Bell, ChevronDown, ChevronRight, Menu, Moon, MoreHorizontal, Search, Sparkles, Sun } from 'lucide-react';
-import { AppIcon, Avatar, Brand, Btn, type Icon } from './primitives';
+import { AppIcon, Brand, Btn, type Icon } from './primitives';
 
 export type NavItem = { label: string; icon: Icon; badge?: number | string };
 export type NavGroup = { label?: string; items: NavItem[] };
