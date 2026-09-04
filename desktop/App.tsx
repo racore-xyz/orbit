@@ -41,6 +41,9 @@ export default function DesktopApp() {
   useEffect(() => { void reloadWs(); }, [tab]);
   /* oxlint-enable react/react-compiler */
   const [openRun, setOpenRun] = useState<string | null>(null);
+  const [guideStep, setGuideStep] = useState(0);
+  const [guideHidden, setGuideHidden] = useState(false);
+  const endDemo = async () => { try { await invoke('workspace_demo_clear'); } finally { setGuideHidden(true); setGuideStep(0); setTab(0); await reloadWs(); } };
   const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? 5 : 1); };
   const [outreachSeed, setOutreachSeed] = useState<Lead[] | null>(null);
   const sendToOutreach = (leads: Lead[]) => { setOutreachSeed(leads); setTab(4); };
@@ -101,6 +104,8 @@ export default function DesktopApp() {
       {tab === 9 && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
     </AppShell>
       {ws && !ws.workspace.onboarding.completed && <Onboarding t={t} ws={ws} done={reloadWs} />}
+      {ws?.workspace.onboarding.completed && ws.workspace.demo && !guideHidden && <Guide t={t} step={guideStep} setStep={setGuideStep} go={setTab} openRun={(id) => setOpenRun(id)} finish={endDemo} hide={() => setGuideHidden(true)} />}
+      {ws?.workspace.demo && <div className="o-demo-bar"><Sparkles size={14} /> <b>{t('Demo mode', 'وضع التجربة')}</b> {t('Sample data is loaded so you can see every module working. It is removed the moment you finish the tour.', 'بيانات تجريبية محمّلة لترى كل الوحدات تعمل. تُحذف فور إنهاء الجولة.')} {guideHidden && <button onClick={() => { setGuideHidden(false); }}>{t('Resume tour', 'استئناف الجولة')}</button>}<button className="primary" onClick={endDemo}>{t('I understand, let’s start', 'فهمت كل شيء، هيا لنبدأ')}</button></div>}
     </>
   );
 }
@@ -1065,7 +1070,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
 
 type WsProfile = { name: string; company: string; role: string; website: string; email: string; industry: string; target_market: string; persona: string; offer: string; goals: string; language: string };
 type WsSummary = {
-  workspace: { id: string; created_at: string; updated_at: string; profile: WsProfile; onboarding: { completed: boolean; step: number; completed_at?: string | null; skipped_connect: boolean }; activity: { at: string; kind: string; text: string }[]; notes: string };
+  workspace: { id: string; demo?: boolean; created_at: string; updated_at: string; profile: WsProfile; onboarding: { completed: boolean; step: number; completed_at?: string | null; skipped_connect: boolean }; activity: { at: string; kind: string; text: string }[]; notes: string };
   progress: { percent: number; checklist: { id: string; label: string; done: boolean }[]; runs: number; lead_runs: number; research_runs: number; leads_total: number; contacts: number; sent: number; followups: number; replied: number; drafts: number; style_learned: boolean; style_edits: number; smtp: boolean; imap: boolean; llm: boolean; webhook: boolean };
   storage: { dir: string; files: { name: string; exists: boolean; size: number }[] };
 };
@@ -1120,6 +1125,7 @@ function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<
     try {
       await persist({ completed: true, completed_at: new Date().toISOString(), skipped_connect: skipped, step: total });
       await invoke('workspace_log', { kind: 'workspace', text: `Workspace created for ${p.company}` });
+      await invoke('workspace_demo_seed');
       await done();
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
@@ -1303,5 +1309,47 @@ function WorkspacePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: 
         </div>
       </Card>
     </>
+  );
+}
+
+/** Guided tour over the demo data. Every step navigates to the real screen. */
+function Guide({ t, step, setStep, go, openRun, finish, hide }: { t: T; step: number; setStep: (n: number) => void; go: (i: number) => void; openRun: (id: string) => void; finish: () => Promise<void>; hide: () => void }) {
+  const steps: { title: string; text: string; tab: number; run?: string; place: 'center' | 'bottom' }[] = [
+    { title: t('Welcome to your workspace', 'أهلاً بك في مساحة عملك'), text: t('This short tour uses sample data (every record is marked “Demo”). Nothing here is real, and it all disappears when you finish. Use the sidebar exactly as you will later.', 'هذه الجولة القصيرة تستخدم بيانات تجريبية (كل سجل مُعلَّم “Demo”). لا شيء هنا حقيقي، وكله يختفي عند الانتهاء. استخدم الشريط الجانبي كما ستفعل لاحقاً.'), tab: 0, place: 'center' },
+    { title: t('Dashboard', 'لوحة التحكم'), text: t('Your setup checklist, live pipeline numbers and recent activity. Each checklist item jumps to the screen that completes it.', 'قائمة الإعداد وأرقام خط الأنابيب الحية والنشاط الأخير. كل عنصر في القائمة ينقلك للشاشة التي تكمله.'), tab: 0, place: 'bottom' },
+    { title: t('Lead Finder', 'البحث عن العملاء'), text: t('Describe a persona, set a target, and results stream in live through Agent Reach. This sample run holds 8 leads with company facts, published emails and a stable ORB id. Click any row to open its identity card.', 'صف شخصية، حدد العدد، وتصل النتائج لحظياً عبر Agent Reach. هذه العملية التجريبية فيها 8 عملاء ببيانات الشركة والإيميلات المنشورة ومعرّف ORB ثابت. اضغط أي صف لفتح بطاقة الهوية.'), tab: 1, run: 'demo-leads', place: 'bottom' },
+    { title: t('Enrich and export', 'الإثراء والتصدير'), text: t('“Enrich” reads each company site and LinkedIn page for logos, photos and published emails. Every run is exported to Excel in Documents\\orbit and saved to History automatically.', '“الإثراء” يقرأ موقع كل شركة وصفحة LinkedIn للشعارات والصور والإيميلات المنشورة. كل عملية تُصدَّر إلى Excel في Documents\\orbit وتُحفظ في السجل تلقائياً.'), tab: 1, place: 'bottom' },
+    { title: t('Market Research', 'أبحاث السوق'), text: t('Same engine, different angles: reports, competitors, news, funding. Rows are typed (company, article, page) with Markdown notes.', 'نفس المحرك بزوايا مختلفة: تقارير، منافسون، أخبار، تمويل. الصفوف مصنّفة (شركة، مقال، صفحة) مع ملاحظات Markdown.'), tab: 5, run: 'demo-research', place: 'bottom' },
+    { title: t('Outreach', 'التواصل'), text: t('A WhatsApp-style inbox. Sara already replied, Omar is on follow-up 1 and due today, Layla was sent this morning, two are drafts. Open a thread to see the stepper, the sequence and the composer.', 'صندوق بأسلوب واتساب. سارة ردّت بالفعل، عمر في المتابعة 1 ومستحق اليوم، ليلى أُرسل لها صباح اليوم، واثنان مسودات. افتح محادثة لترى الخطوات والتسلسل والمحرر.'), tab: 4, place: 'bottom' },
+    { title: t('Your writing style', 'أسلوبك في الكتابة'), text: t('Click “My writing style”, paste a few emails you wrote, and Learn. Drafts then follow your tone, and every edit you make before sending is learned too. “Send due follow-ups” handles the rest.', 'اضغط “أسلوبي في الكتابة”، الصق رسائل كتبتها، ثم تعلّم. المسودات تتبع نبرتك بعدها، وكل تعديل قبل الإرسال يُتعلَّم أيضاً. “إرسال المتابعات المستحقة” يتكفل بالباقي.'), tab: 4, place: 'bottom' },
+    { title: t('Integrations', 'التكاملات'), text: t('Gmail via app password (SMTP + IMAP), any SMTP server, signed webhooks, Agent Reach health, and LLM provider keys. Passwords and keys live only in Windows Credential Manager.', 'Gmail بكلمة مرور تطبيق (SMTP + IMAP)، أي خادم SMTP، webhooks موقّعة، صحة Agent Reach، ومفاتيح مزوّدي النماذج. كلمات المرور والمفاتيح في Windows Credential Manager فقط.'), tab: 7, place: 'bottom' },
+    { title: t('History and Settings', 'السجل والإعدادات'), text: t('History keeps every run to reopen later. Settings holds your profile, notes, activity, backups, and a Delete button for every dataset.', 'السجل يحتفظ بكل عملية لإعادة فتحها. الإعدادات فيها ملفك وملاحظاتك ونشاطك والنسخ الاحتياطية وزر حذف لكل مجموعة بيانات.'), tab: 8, place: 'bottom' },
+    { title: t('Ready?', 'جاهز؟'), text: t('Click the button and all sample data is deleted immediately. Your workspace starts clean with the profile you entered.', 'اضغط الزر وتُحذف كل البيانات التجريبية فوراً. تبدأ مساحتك نظيفة بالملف الذي أدخلته.'), tab: 0, place: 'center' },
+  ];
+  const s = steps[Math.min(step, steps.length - 1)];
+  const goTo = (n: number) => { const st = steps[n]; go(st.tab); if (st.run) openRun(st.run); setStep(n); };
+  /* oxlint-disable react/react-compiler -- navigate when the tour opens */
+  useEffect(() => { go(s.tab); if (s.run) openRun(s.run); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const last = step >= steps.length - 1;
+  return (
+    <div className={`o-guide ${s.place}`}>
+      <div className="o-guide-card">
+        <div className="o-between">
+          <span className="o-eyebrow" style={{ margin: 0 }}><Sparkles size={12} /> {t('Guided tour', 'جولة إرشادية')} · {step + 1}/{steps.length}</span>
+          <button className="o-more" onClick={hide} aria-label="Hide"><X size={14} /></button>
+        </div>
+        <h3>{s.title}</h3>
+        <p>{s.text}</p>
+        <div className="o-progress" style={{ margin: '10px 0' }}><i style={{ width: `${((step + 1) / steps.length) * 100}%` }} /></div>
+        <div className="o-between">
+          <Btn variant="ghost" size="sm" onClick={() => goTo(Math.max(0, step - 1))} disabled={step === 0}>{t('Back', 'رجوع')}</Btn>
+          <div className="o-flex">
+            {!last && <Btn variant="ghost" size="sm" onClick={finish}>{t('Skip tour', 'تخطي الجولة')}</Btn>}
+            {last ? <Btn size="sm" icon={Check} onClick={finish}>{t('I understand, let’s start', 'فهمت كل شيء، هيا لنبدأ')}</Btn> : <Btn size="sm" onClick={() => goTo(step + 1)}>{t('Next', 'التالي')} <ChevronRight size={14} /></Btn>}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
