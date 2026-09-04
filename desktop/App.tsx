@@ -38,7 +38,7 @@ import {
 
 
 type T = (en: string, ar: string) => string;
-const TAB = { dashboard: 0, leads: 1, crm: 2, campaigns: 3, outreach: 4, templates: 5, research: 6, social: 7, agents: 8, integrations: 9, history: 10, settings: 11 } as const;
+const TAB = { dashboard: 0, leads: 1, research: 2, social: 3, outreach: 4, templates: 5, crm: 6, campaigns: 7, agents: 8, integrations: 9, history: 10, settings: 11 } as const;
 
 export default function DesktopApp() {
   const { dark, toggleDark, lang, toggleLang, rtl, t } = useTheme();
@@ -66,7 +66,7 @@ export default function DesktopApp() {
   };
   const unread = ws?.workspace.notifications?.filter((n) => !n.read).length || 0;
   const [guideHidden, setGuideHidden] = useState(false);
-  const endDemo = async () => { try { await invoke('workspace_demo_clear'); } finally { setGuideHidden(true); setGuideStep(0); setTab(0); await reloadWs(); } };
+  const endDemo = async () => { try { await invoke('workspace_demo_clear'); } finally { setGuideHidden(true); setGuideStep(0); setTab(TAB.dashboard); await reloadWs(); } };
   const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? TAB.research : mode === 'reddit' ? TAB.social : TAB.leads); };
   const [outreachSeed, setOutreachSeed] = useState<Lead[] | null>(null);
   const sendToOutreach = (leads: Lead[]) => { setOutreachSeed(leads); setTab(TAB.outreach); };
@@ -79,12 +79,12 @@ export default function DesktopApp() {
       items: [
         { label: t('Dashboard', 'لوحة التحكم'), icon: BarChart3 },
         { label: t('Lead Finder', 'البحث عن العملاء'), icon: Search },
-        { label: t('CRM', 'إدارة العملاء'), icon: Users },
-        { label: t('Campaigns', 'الحملات'), icon: Send },
-        { label: t('Outreach', 'التواصل'), icon: MessageSquare },
-        { label: t('Templates', 'القوالب'), icon: FileText },
         { label: t('Market Research', 'أبحاث السوق'), icon: Compass },
         { label: t('Social Media', 'وسائل التواصل'), icon: Radio },
+        { label: t('Outreach', 'التواصل'), icon: MessageSquare },
+        { label: t('Templates', 'القوالب'), icon: FileText },
+        { label: t('CRM', 'إدارة العملاء'), icon: Users },
+        { label: t('Campaigns', 'الحملات'), icon: Send },
         { label: t('AI Agents', 'وكلاء الذكاء الاصطناعي'), icon: Bot },
         { label: t('Integrations', 'التكاملات'), icon: Plug },
         { label: t('History', 'سجل البحث'), icon: History },
@@ -123,11 +123,11 @@ export default function DesktopApp() {
       onNotificationsClear={() => { void invoke('notifications_mark', { ids: [], read: true, clear: true }).then(() => reloadWs()); }}
       jobs={job ? <div className={`o-job${job.done ? ' done' : ''}`} title={job.label}><span className={`o-spinner${job.done ? ' done' : ''}`} /><span className="o-job-label">{job.label}</span><b>{job.percent}%</b>{!job.done && <button onClick={() => void invoke('job_cancel', { jobId: job.id })} aria-label="Cancel">✕</button>}</div> : null}
     >
-      {tab === 0 && <Dashboard t={t} go={setTab} ws={ws} onAutodraft={startAutodraft} jobRunning={!!job && !job.done} />}
-      {tab === 1 && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
-      {tab === 2 && <Module t={t} title={t('CRM', 'إدارة العملاء')} icon={Users} action={t('Add contact', 'إضافة جهة اتصال')} />}
-      {tab === 3 && <Module t={t} title={t('Campaigns', 'الحملات')} icon={Send} action={t('Create campaign', 'إنشاء حملة')} />}
-      {tab === 4 && <Outreach t={t} seed={outreachSeed} onSeeded={() => setOutreachSeed(null)} />}
+      {tab === TAB.dashboard && <Dashboard t={t} go={setTab} ws={ws} onAutodraft={startAutodraft} jobRunning={!!job && !job.done} />}
+      {tab === TAB.leads && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
+      {tab === TAB.crm && <Module t={t} title={t('CRM', 'إدارة العملاء')} icon={Users} action={t('Add contact', 'إضافة جهة اتصال')} />}
+      {tab === TAB.campaigns && <Module t={t} title={t('Campaigns', 'الحملات')} icon={Send} action={t('Create campaign', 'إنشاء حملة')} />}
+      {tab === TAB.outreach && <Outreach t={t} seed={outreachSeed} onSeeded={() => setOutreachSeed(null)} />}
       {tab === TAB.templates && <TemplatesPage t={t} />}
       {tab === TAB.research && <LeadFinder t={t} mode="research" openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
       {tab === TAB.social && <SocialPage t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} />}
@@ -1478,12 +1478,12 @@ function Guide({ t, step, setStep, go, openRun, finish, hide }: { t: T; step: nu
   const steps: { title: string; text: string; tab: number; run?: string; place: 'center' | 'bottom' }[] = [
     { title: t('Welcome to your workspace', 'أهلاً بك في مساحة عملك'), text: t('This short tour uses sample data (every record is marked “Demo”). Nothing here is real, and it all disappears when you finish. Use the sidebar exactly as you will later.', 'هذه الجولة القصيرة تستخدم بيانات تجريبية (كل سجل مُعلَّم “Demo”). لا شيء هنا حقيقي، وكله يختفي عند الانتهاء. استخدم الشريط الجانبي كما ستفعل لاحقاً.'), tab: 0, place: 'center' },
     { title: t('Dashboard', 'لوحة التحكم'), text: t('Your setup checklist, live pipeline numbers and recent activity. Each checklist item jumps to the screen that completes it.', 'قائمة الإعداد وأرقام خط الأنابيب الحية والنشاط الأخير. كل عنصر في القائمة ينقلك للشاشة التي تكمله.'), tab: 0, place: 'bottom' },
-    { title: t('Lead Finder', 'البحث عن العملاء'), text: t('Describe a persona, set a target, and results stream in live through Agent Reach. This sample run holds 8 leads with company facts, published emails and a stable ORB id. Click any row to open its identity card.', 'صف شخصية، حدد العدد، وتصل النتائج لحظياً عبر Agent Reach. هذه العملية التجريبية فيها 8 عملاء ببيانات الشركة والإيميلات المنشورة ومعرّف ORB ثابت. اضغط أي صف لفتح بطاقة الهوية.'), tab: 1, run: 'demo-leads', place: 'bottom' },
-    { title: t('Enrich and export', 'الإثراء والتصدير'), text: t('“Enrich” reads each company site and LinkedIn page for logos, photos and published emails. Every run is exported to Excel in Documents\\orbit and saved to History automatically.', '“الإثراء” يقرأ موقع كل شركة وصفحة LinkedIn للشعارات والصور والإيميلات المنشورة. كل عملية تُصدَّر إلى Excel في Documents\\orbit وتُحفظ في السجل تلقائياً.'), tab: 1, place: 'bottom' },
+    { title: t('Lead Finder', 'البحث عن العملاء'), text: t('Describe a persona, set a target, and results stream in live through Agent Reach. This sample run holds 8 leads with company facts, published emails and a stable ORB id. Click any row to open its identity card.', 'صف شخصية، حدد العدد، وتصل النتائج لحظياً عبر Agent Reach. هذه العملية التجريبية فيها 8 عملاء ببيانات الشركة والإيميلات المنشورة ومعرّف ORB ثابت. اضغط أي صف لفتح بطاقة الهوية.'), tab: TAB.leads, run: 'demo-leads', place: 'bottom' },
+    { title: t('Enrich and export', 'الإثراء والتصدير'), text: t('“Enrich” reads each company site and LinkedIn page for logos, photos and published emails. Every run is exported to Excel in Documents\\orbit and saved to History automatically.', '“الإثراء” يقرأ موقع كل شركة وصفحة LinkedIn للشعارات والصور والإيميلات المنشورة. كل عملية تُصدَّر إلى Excel في Documents\\orbit وتُحفظ في السجل تلقائياً.'), tab: TAB.leads, place: 'bottom' },
     { title: t('Market Research', 'أبحاث السوق'), text: t('Same engine, different angles: reports, competitors, news, funding. Rows are typed (company, article, page) with Markdown notes.', 'نفس المحرك بزوايا مختلفة: تقارير، منافسون، أخبار، تمويل. الصفوف مصنّفة (شركة، مقال، صفحة) مع ملاحظات Markdown.'), tab: TAB.research, run: 'demo-research', place: 'bottom' },
     { title: t('Social Media', 'وسائل التواصل'), text: t('Reddit through Arctic Shift: type a topic, orbit. discovers subreddits, pulls a year of posts and the comments under the most discussed ones, charts the trend, and the model writes a market report: established vs emerging markets, opportunities, and what people really think.', 'Reddit عبر Arctic Shift: اكتب موضوعاً، يكتشف orbit. المجتمعات، يسحب سنة من المنشورات والتعليقات تحت الأكثر نقاشاً، يرسم الاتجاه، ويكتب النموذج تقرير سوق: أسواق قائمة وناشئة، فرص، وآراء الناس الحقيقية.'), tab: TAB.social, place: 'bottom' },
-    { title: t('Outreach', 'التواصل'), text: t('A WhatsApp-style inbox. Sara already replied, Omar is on follow-up 1 and due today, Layla was sent this morning, two are drafts. Open a thread to see the stepper, the sequence and the composer.', 'صندوق بأسلوب واتساب. سارة ردّت بالفعل، عمر في المتابعة 1 ومستحق اليوم، ليلى أُرسل لها صباح اليوم، واثنان مسودات. افتح محادثة لترى الخطوات والتسلسل والمحرر.'), tab: 4, place: 'bottom' },
-    { title: t('Your writing style', 'أسلوبك في الكتابة'), text: t('Click “My writing style”, paste a few emails you wrote, and Learn. Drafts then follow your tone, and every edit you make before sending is learned too. “Send due follow-ups” handles the rest.', 'اضغط “أسلوبي في الكتابة”، الصق رسائل كتبتها، ثم تعلّم. المسودات تتبع نبرتك بعدها، وكل تعديل قبل الإرسال يُتعلَّم أيضاً. “إرسال المتابعات المستحقة” يتكفل بالباقي.'), tab: 4, place: 'bottom' },
+    { title: t('Outreach', 'التواصل'), text: t('A WhatsApp-style inbox. Sara already replied, Omar is on follow-up 1 and due today, Layla was sent this morning, two are drafts. Open a thread to see the stepper, the sequence and the composer.', 'صندوق بأسلوب واتساب. سارة ردّت بالفعل، عمر في المتابعة 1 ومستحق اليوم، ليلى أُرسل لها صباح اليوم، واثنان مسودات. افتح محادثة لترى الخطوات والتسلسل والمحرر.'), tab: TAB.outreach, place: 'bottom' },
+    { title: t('Your writing style', 'أسلوبك في الكتابة'), text: t('Click “My writing style”, paste a few emails you wrote, and Learn. Drafts then follow your tone, and every edit you make before sending is learned too. “Send due follow-ups” handles the rest.', 'اضغط “أسلوبي في الكتابة”، الصق رسائل كتبتها، ثم تعلّم. المسودات تتبع نبرتك بعدها، وكل تعديل قبل الإرسال يُتعلَّم أيضاً. “إرسال المتابعات المستحقة” يتكفل بالباقي.'), tab: TAB.outreach, place: 'bottom' },
     { title: t('Templates', 'القوالب'), text: t('Write your first email once, in your own words, with placeholders like {{first_name}} and {{company}}. Generate 3–5 variants in your style, then Outreach auto-fills them for every lead and tracks which variant gets replies.', 'اكتب رسالتك الأولى مرة واحدة بكلماتك مع placeholders مثل {{first_name}} و{{company}}. ولّد 3–5 نسخ بأسلوبك، ثم يملؤها التواصل تلقائياً لكل عميل ويتتبع أي نسخة تجلب الردود.'), tab: TAB.templates, place: 'bottom' },
     { title: t('Integrations', 'التكاملات'), text: t('Gmail via app password (SMTP + IMAP), any SMTP server, signed webhooks, Agent Reach health, and LLM provider keys. Passwords and keys live only in Windows Credential Manager.', 'Gmail بكلمة مرور تطبيق (SMTP + IMAP)، أي خادم SMTP، webhooks موقّعة، صحة Agent Reach، ومفاتيح مزوّدي النماذج. كلمات المرور والمفاتيح في Windows Credential Manager فقط.'), tab: TAB.integrations, place: 'bottom' },
     { title: t('History and Settings', 'السجل والإعدادات'), text: t('History keeps every run to reopen later. Settings holds your profile, notes, activity, backups, and a Delete button for every dataset.', 'السجل يحتفظ بكل عملية لإعادة فتحها. الإعدادات فيها ملفك وملاحظاتك ونشاطك والنسخ الاحتياطية وزر حذف لكل مجموعة بيانات.'), tab: TAB.history, place: 'bottom' },
