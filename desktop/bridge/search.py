@@ -96,13 +96,36 @@ def parse_exa_text(text):
     return results
 
 
+EXA_MIN_GAP = 1.0 if os.environ.get("ORBIT_EXA_KEYED") else 2.5   # seconds between calls (free shared endpoint is stricter)
+_exa_last = [0.0]
+EXA_LIMIT_MSG = ("Exa rate limit reached on the free shared endpoint. Add your own free Exa API key under Integrations → Agent Reach "
+                 "(dashboard.exa.ai/api-keys) for a much higher limit, or wait a few minutes and retry.")
+
+
+class ExaRateLimit(RuntimeError):
+    pass
+
+
 def ch_exa(q, n):
+    """Exa via mcporter, paced and with one backoff retry on HTTP 429."""
+    import time as _t
     mcporter = mcporter_cmd()
     if not mcporter:
         raise RuntimeError("mcporter is not installed. Run setup, or: npm i -g mcporter && mcporter config add exa https://mcp.exa.ai/mcp --scope home")
-    p = run([*mcporter, "call", "exa.web_search_exa", f"query={q}", f"numResults={n}", "--output", "json"], timeout=90)
-    if p.returncode != 0:
+    for attempt in range(2):
+        gap = EXA_MIN_GAP - (_t.time() - _exa_last[0])
+        if gap > 0:
+            _t.sleep(gap)
+        _exa_last[0] = _t.time()
+        p = run([*mcporter, "call", "exa.web_search_exa", f"query={q}", f"numResults={n}", "--output", "json"], timeout=90)
+        if p.returncode == 0:
+            break
         err = (p.stderr or p.stdout).strip()
+        if "429" in err or "rate limit" in err.lower():
+            if attempt == 0:
+                _t.sleep(20)
+                continue
+            raise ExaRateLimit(EXA_LIMIT_MSG)
         if "exa" in err.lower() and ("not found" in err.lower() or "unknown" in err.lower()):
             err = "Exa is not configured in mcporter. Run setup, or: mcporter config add exa https://mcp.exa.ai/mcp --scope home"
         raise RuntimeError(err[-400:] or "mcporter call failed")
@@ -236,6 +259,7 @@ def doctor():
     if have_pkg:
         checks.append({"id": "agent_reach", "label": "Agent Reach package", "ok": True, "required": True, "detail": "installed"})
     ok_exa, exa_detail = exa_live_check()
+    exa_detail = exa_detail + (" · your Exa key" if os.environ.get("ORBIT_EXA_KEYED") else " · free shared endpoint (low rate limit; add your Exa key in Integrations)")
     checks.append({"id": "exa_search", "label": LABELS["exa_search"], "ok": ok_exa, "required": True, "detail": exa_detail, "fix": FIXES["exa_search"]})
     order = ["web", "github", "rss", "youtube", "linkedin", "twitter", "reddit", "facebook", "instagram"]
     for key in order:

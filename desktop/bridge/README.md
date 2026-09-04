@@ -47,3 +47,6 @@ Not bundled (no package-manager distribution): GitHub CLI `gh`, `deno`, `uvx`, `
 
 ## Social Media → Reddit
 `main.py reddit-stream <params.json>` uses Arctic Shift (`social.py`): subreddit discovery, paced post search per subreddit with a date window, comments on the most discussed posts, monthly timeline, top subreddits and terms. The app then asks the configured LLM for a market report (established vs emerging markets, opportunities, opinions, pain points).
+
+## Exa quota
+Agent Reach's web search runs on Exa's MCP. Without a key it uses the free shared endpoint at `https://mcp.exa.ai/mcp`, whose rate limit is unpublished and low; it answers HTTP 429 after a burst of searches. Integrations → Agent Reach → "Exa API key" stores a personal key (free tier at https://dashboard.exa.ai/api-keys) in the credential store and writes `%APPDATA%\orbit\mcporter.json` with `?exaApiKey=…`, which the bridge prefers over the bundled config. The bridge also paces Exa calls (2.5 s apart on the shared endpoint, 1 s with a key), retries once after 20 s on 429, stops a run early after three near-empty queries, and caps a run at 25 calls.

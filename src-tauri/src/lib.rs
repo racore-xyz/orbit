@@ -45,7 +45,10 @@ fn bridge_cmd() -> Result<Command, String> {
     cmd.env("ORBIT_NODE", node);
     cmd.env("ORBIT_MCPORTER_CLI", cli);
   }
-  if let Some(cfg) = resource("mcporter.json") { cmd.env("MCPORTER_CONFIG", cfg); }
+  // Personal Exa key (Integrations → Agent Reach) beats the bundled free-tier config.
+  let user_cfg = integrations::exa_config_path();
+  if user_cfg.exists() { cmd.env("MCPORTER_CONFIG", &user_cfg); cmd.env("ORBIT_EXA_KEYED", "1"); }
+  else if let Some(cfg) = resource("mcporter.json") { cmd.env("MCPORTER_CONFIG", cfg); }
   // Bundled extension CLIs (yt-dlp, twitter, rdt, xhs, ffmpeg, opencli, node, mcporter) come first on
   // PATH so Agent Reach's doctor and channels find them with nothing installed on the machine.
   let mut path = std::env::var("PATH").unwrap_or_default();
@@ -365,6 +368,10 @@ async fn notifications_mark(ids: Vec<String>, read: bool, clear: Option<bool>) -
 #[tauri::command]
 async fn dashboard_data() -> Result<serde_json::Value, String> { Ok(blocking!(outreach::dashboard())) }
 #[tauri::command]
+async fn exa_set_key(key: String) -> Result<serde_json::Value, String> { blocking!(integrations::exa_set_key(key)) }
+#[tauri::command]
+async fn exa_status() -> Result<serde_json::Value, String> { Ok(blocking!(integrations::exa_status())) }
+#[tauri::command]
 async fn llm_set_rate_limit(provider: String, rpm: u32) -> Result<(), String> { blocking!(llm::set_rate_limit(&provider, rpm)) }
 
 #[tauri::command]
@@ -378,7 +385,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

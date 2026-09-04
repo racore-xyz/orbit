@@ -165,13 +165,14 @@ def emit_line(obj):
     sys.stdout.flush()
 
 
-def find_leads(query, target=1000, max_calls=40, angles=None, emit=None):
+def find_leads(query, target=1000, max_calls=25, angles=None, emit=None):
     seen, leads, calls = set(), [], []
     variants = []
     for region in REGIONS:
         for angle in (angles or ANGLES):
             variants.append(" ".join(x for x in [query, region, angle] if x))
     plan = variants[:max_calls]
+    weak = 0
     if emit:
         emit({"type": "start", "query": query, "target": target, "planned_calls": len(plan), "percent": 0})
     for i, v in enumerate(plan):
@@ -193,11 +194,17 @@ def find_leads(query, target=1000, max_calls=40, angles=None, emit=None):
             calls.append({"query": v, "returned": len(hits), "new": len(batch)})
             if emit:
                 emit({"type": "batch", "index": i + 1, "planned_calls": len(plan), "query": v, "returned": len(hits), "new": len(batch), "count": len(leads), "target": target, "percent": _percent(len(leads), target, i + 1, len(plan)), "leads": batch})
+            weak = weak + 1 if len(batch) < 5 else 0
+            if weak >= 3:
+                if emit:
+                    emit({"type": "log", "line": "Stopping early: the last 3 queries added almost nothing new (saves your Exa quota)."})
+                break
         except Exception as e:  # noqa
             calls.append({"query": v, "error": str(e)[:200]})
+            fatal = "not installed" in str(e) or "not configured" in str(e) or "rate limit" in str(e).lower()
             if emit:
-                emit({"type": "error", "index": i + 1, "query": v, "error": str(e)[:300], "fatal": "not installed" in str(e) or "not configured" in str(e)})
-            if "not installed" in str(e) or "not configured" in str(e):
+                emit({"type": "error", "index": i + 1, "query": v, "error": str(e)[:300], "fatal": fatal and not leads, "stopped": fatal})
+            if fatal:
                 break
     return {"query": query, "target": target, "count": len(leads), "calls": calls, "fetched_at": now(), "engine": "agent-reach/exa", "leads": leads}
 

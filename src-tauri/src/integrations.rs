@@ -268,3 +268,28 @@ pub fn webhook_disconnect() -> Result<(), String> {
   cfg.webhook = Webhook::default();
   save(&cfg)
 }
+
+// ---------------------------------------------------------------- Exa (Agent Reach web search) personal API key
+/// Save the user's Exa key and write a private mcporter config that uses it. Empty key = back to the free shared endpoint.
+pub fn exa_set_key(key: String) -> Result<serde_json::Value, String> {
+  let key = key.trim().to_string();
+  let cfg_path = exa_config_path();
+  if key.is_empty() {
+    secret_del("exa-api-key");
+    let _ = std::fs::remove_file(&cfg_path);
+    return Ok(serde_json::json!({ "ok": true, "configured": false }));
+  }
+  secret_set("exa-api-key", &key)?;
+  if let Some(d) = cfg_path.parent() { std::fs::create_dir_all(d).map_err(|e| e.to_string())?; }
+  let cfg = serde_json::json!({ "mcpServers": { "exa": { "baseUrl": format!("https://mcp.exa.ai/mcp?exaApiKey={key}") } }, "imports": [] });
+  std::fs::write(&cfg_path, serde_json::to_vec_pretty(&cfg).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+  Ok(serde_json::json!({ "ok": true, "configured": true }))
+}
+pub fn exa_config_path() -> std::path::PathBuf {
+  let base = std::env::var("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+  base.join("orbit").join("mcporter.json")
+}
+pub fn exa_status() -> serde_json::Value {
+  let has = secret_get("exa-api-key").is_some() && exa_config_path().exists();
+  serde_json::json!({ "configured": has, "config": exa_config_path().to_string_lossy() })
+}

@@ -361,6 +361,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
   const [s, setS] = useState({ host: '', port: '587', username: '', password: '', from: '', security: 'starttls', test_to: '' });
   const [w, setW] = useState({ url: '', secret: '', shown: '' });
   const [im, setIm] = useState({ host: '', port: '993', username: '', password: '' });
+  const [exa, setExa] = useState({ key: '', configured: false });
 
   const refresh = async () => {
     try {
@@ -375,6 +376,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
   };
   const checkReach = async () => {
     setBusy('reach');
+    try { const e = await invoke<{ configured: boolean }>('exa_status'); setExa((x) => ({ ...x, configured: e.configured })); } catch { /* ignore */ }
     try { const d = JSON.parse(await invoke<string>('bridge_doctor')); setReach(d); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); }
   };
   /* oxlint-disable react/react-compiler -- load persisted status once after mount */
@@ -495,6 +497,16 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
 
             {open === c.id && c.id === 'reach' && (
               <div className="o-int-form">
+                <div className="o-onb-card" style={{ marginBottom: 12 }}>
+                  <div className="o-flex"><IconTile icon={KeyRound} tone={exa.configured ? 'green' : 'orange'} /><b>{t('Exa API key (web search quota)', 'مفتاح Exa (حصة البحث)')}</b><Chip tone={exa.configured ? 'green' : 'orange'}>{exa.configured ? t('Your key in use', 'مفتاحك مستخدم') : t('Free shared endpoint', 'النقطة المجانية المشتركة')}</Chip></div>
+                  <p className="o-note" style={{ marginTop: 4 }}>{t('Without a key, Agent Reach uses Exa’s free shared MCP endpoint, which has a low unpublished rate limit and returns HTTP 429 when many searches run in a row. A personal key from dashboard.exa.ai (free tier included) lifts that limit. It is stored in Windows Credential Manager and used automatically.', 'بدون مفتاح، يستخدم Agent Reach نقطة Exa المجانية المشتركة ذات الحد المنخفض غير المعلن، وتعيد HTTP 429 عند تشغيل عدة بحوث متتالية. مفتاح شخصي من dashboard.exa.ai (يشمل مستوى مجاني) يرفع هذا الحد. يُحفظ في Windows Credential Manager ويُستخدم تلقائياً.')}</p>
+                  <div className="o-flex" style={{ flexWrap: 'wrap' }}>
+                    <input className="o-input" aria-label="Exa API key" type="password" style={{ height: 34, flex: 1, minWidth: 220 }} value={exa.key} onChange={(e) => setExa({ ...exa, key: e.target.value })} placeholder={exa.configured ? t('(stored · paste to replace)', '(محفوظ · الصق للاستبدال)') : 'exa_…'} />
+                    <Btn size="sm" disabled={!!busy || !exa.key.trim()} onClick={() => act('exa', async () => { await invoke('exa_set_key', { key: exa.key }); setExa({ key: '', configured: true }); await checkReach(); return t('Exa key saved. Web search now uses your quota.', 'تم حفظ مفتاح Exa. البحث يستخدم حصتك الآن.'); })}>{t('Save', 'حفظ')}</Btn>
+                    {exa.configured && <Btn size="sm" variant="ghost" disabled={!!busy} onClick={() => act('exa-rm', async () => { await invoke('exa_set_key', { key: '' }); setExa({ key: '', configured: false }); await checkReach(); return t('Exa key removed', 'تمت إزالة مفتاح Exa'); })}>{t('Remove', 'إزالة')}</Btn>}
+                    <a href="https://dashboard.exa.ai/api-keys" target="_blank" rel="noreferrer" className="o-btn o-btn-secondary o-btn-sm"><ExternalLink size={14} /> {t('Get a free key', 'احصل على مفتاح مجاني')}</a>
+                  </div>
+                </div>
                 {reach ? reach.checks.map((k) => (
                   <div key={k.id} className="o-row">
                     <Chip tone={k.ok ? 'green' : k.required ? 'coral' : k.status === 'warn' ? 'orange' : 'neutral'}>{k.ok ? 'OK' : k.required ? t('Missing', 'مفقود') : k.status === 'warn' ? t('Needs login', 'يحتاج تسجيل دخول') : t('Optional', 'اختياري')}</Chip>
@@ -580,7 +592,10 @@ function LeadFinder({ t, mode = 'leads', openRunId, onOpened, onOutreach }: { t:
       } else if (e.type === 'error') {
         pushFeed(`! ${e.error}`);
         setOut((o) => o ? { ...o, calls: [...o.calls, { query: e.query || '', error: e.error }] } : o);
+        if ((e as { stopped?: boolean }).stopped && !e.fatal) setError(e.error || '');
         if (e.fatal) { setError(e.error || 'failed'); setBusy(null); stopListening(); }
+      } else if (e.type === 'log') {
+        pushFeed(`· ${(e as { line?: string }).line || ''}`);
       } else if (e.type === 'done') {
         setExportPaths(e.export?.paths || {});
         setProgress((p) => ({ ...p, percent: 100, label: t(`Done · ${e.count} records`, `اكتمل · ${e.count} سجل`) }));
