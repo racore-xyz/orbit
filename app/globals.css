@@ -691,6 +691,39 @@ a { color: inherit; text-decoration: none; }
 .o-hero p { color: var(--muted); font-size: 13px; }
 
 /* =====================================================================
+   Icon discipline: fixed sizes, centered, never past a container's edge
+   ===================================================================== */
+svg { vertical-align: middle; flex-shrink: 0; }
+.o-icon-tile { overflow: hidden; line-height: 0; }
+.o-icon-tile svg { width: 16px; height: 16px; }
+.o-icon-tile.lg svg { width: 20px; height: 20px; }
+.o-icon-tile.xl svg { width: 22px; height: 22px; }
+.o-nav-item svg { width: 17px; height: 17px; }
+.o-iconbtn { line-height: 0; overflow: visible; }
+.o-iconbtn svg { width: 17px; height: 17px; }
+.o-btn svg { width: 16px; height: 16px; }
+.o-btn-sm svg, .o-btn-ghost svg { width: 14px; height: 14px; }
+.o-chip svg { width: 12px; height: 12px; }
+.o-more svg { width: 15px; height: 15px; }
+.o-provider-logo, .o-llm .o-provider-logo { overflow: hidden; line-height: 0; }
+.o-provider-logo svg { width: 18px; height: 18px; }
+.o-social-chip svg { width: 18px; height: 18px; }
+.o-lead-avatar { overflow: hidden; }
+.o-lead-avatar .o-lead-badge { inset-inline-end: 1px; bottom: 1px; width: 14px; height: 14px; border-radius: 3px; }
+.o-card-id-avatar .o-lead-avatar { overflow: visible; }
+.o-card-id-avatar .o-lead-avatar .o-lead-badge { width: 22px; height: 22px; inset-inline-end: -2px; bottom: -2px; border-radius: 6px; }
+.o-bell-count { top: 2px; inset-inline-end: 2px; min-width: 16px; height: 16px; line-height: 16px; font-size: 9px; border-width: 1.5px; }
+.o-card-head h2 svg, .o-between b svg, .o-history b svg, .o-tutorial-step b svg, .o-onb-card b svg { width: 14px; height: 14px; margin-inline-end: 4px; }
+.o-row .o-icon-tile, .o-insight .o-icon-tile, .o-stat-top .o-icon-tile, .o-pipe-step .o-icon-tile { flex-shrink: 0; }
+.o-pipe-step .o-icon-tile { width: 28px; height: 28px; border-radius: 8px; }
+.o-stepper .o-step i, .o-tutorial-step i, .o-check i { flex-shrink: 0; }
+.o-brand-mark, .o-mark { flex-shrink: 0; }
+.o-chat-item .o-lead-avatar, .o-chat-head .o-lead-avatar { flex-shrink: 0; }
+.o-research-input .o-icon-tile { width: 40px; height: 40px; border-radius: 10px; }
+.o-research-input .o-icon-tile svg { width: 18px; height: 18px; }
+.o-bubble-meta a svg { width: 11px; height: 11px; }
+
+/* =====================================================================
    Utilities
    ===================================================================== */
 .o-more { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: var(--muted-2); }
