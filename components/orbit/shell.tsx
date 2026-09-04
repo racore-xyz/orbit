@@ -88,7 +88,6 @@ export function AppShell({
             </div>
           )}
           <div className="o-user">
-            <Avatar text={user[0]?.toUpperCase() || 'U'} tone="coral" round size="lg" />
             <div>
               <b>{user}</b>
               <small>{userSub}</small>
