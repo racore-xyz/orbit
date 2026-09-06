@@ -117,6 +117,58 @@ pub fn complete(provider: Option<String>, model: Option<String>, system: String,
   Ok(text.trim().to_string())
 }
 
+/// Streaming completion. Invokes `on_delta` with each text chunk as it arrives (for live UIs),
+/// and returns the full text. Streams via SSE for Anthropic, Google and OpenAI-compatible providers.
+pub fn complete_stream<F: FnMut(&str)>(provider: Option<String>, model: Option<String>, system: String, user: String, max_tokens: u32, mut on_delta: F) -> Result<String, String> {
+  use std::io::BufRead;
+  let s = settings();
+  let provider = provider.or(s.provider).ok_or("No LLM provider selected. Add an API key under Integrations → LLM providers.")?;
+  let info = PROVIDERS.iter().find(|p| p.id == provider).ok_or("unknown provider")?;
+  let model = model.or(s.model).filter(|m| !m.is_empty()).unwrap_or_else(|| info.models[0].to_string());
+  let key = get_key(&provider).ok_or(format!("No API key saved for {}. Add it under Integrations → LLM providers.", info.name))?;
+  let c = client();
+  throttle(&provider);
+  crate::quota::record_llm();
+  let resp = match provider.as_str() {
+    "anthropic" => c.post("https://api.anthropic.com/v1/messages").header("x-api-key", &key).header("anthropic-version", "2023-06-01")
+      .json(&serde_json::json!({ "model": model, "max_tokens": max_tokens, "stream": true, "system": system, "messages": [{ "role": "user", "content": user }] }))
+      .send().map_err(|e| e.to_string())?,
+    "google" => {
+      let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={key}");
+      c.post(&url).json(&serde_json::json!({ "systemInstruction": { "parts": [{ "text": system }] }, "contents": [{ "parts": [{ "text": user }] }], "generationConfig": { "maxOutputTokens": max_tokens } })).send().map_err(|e| e.to_string())?
+    }
+    _ => {
+      let base = match provider.as_str() { "groq" => "https://api.groq.com/openai/v1", "mistral" => "https://api.mistral.ai/v1", "openrouter" => "https://openrouter.ai/api/v1", _ => "https://api.openai.com/v1" };
+      c.post(format!("{base}/chat/completions")).bearer_auth(&key)
+        .json(&serde_json::json!({ "model": model, "max_tokens": max_tokens, "stream": true, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }] }))
+        .send().map_err(|e| e.to_string())?
+    }
+  };
+  let status = resp.status().as_u16();
+  if status >= 400 {
+    let t = resp.text().unwrap_or_default();
+    let tag = if status == 429 || status >= 500 { "rate limit/overloaded" } else { "error" };
+    return Err(format!("HTTP {status} {tag} ({}): {}", info.name, t.chars().take(240).collect::<String>()));
+  }
+  let mut full = String::new();
+  let reader = std::io::BufReader::new(resp);
+  for line in reader.lines() {
+    let Ok(line) = line else { break };
+    let Some(data) = line.strip_prefix("data:").map(|d| d.trim()) else { continue };
+    if data.is_empty() { continue; }
+    if data == "[DONE]" { break; }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else { continue };
+    let piece = match provider.as_str() {
+      "anthropic" => v.pointer("/delta/text").and_then(|t| t.as_str()),
+      "google" => v.pointer("/candidates/0/content/parts/0/text").and_then(|t| t.as_str()),
+      _ => v.pointer("/choices/0/delta/content").and_then(|t| t.as_str()),
+    };
+    if let Some(p) = piece { if !p.is_empty() { full.push_str(p); on_delta(p); } }
+  }
+  if full.trim().is_empty() { return Err(format!("{} returned an empty response", info.name)); }
+  Ok(full.trim().to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn complete_once(c: &reqwest::blocking::Client, provider: &str, info: &ProviderInfo, model: &str, key: &str, system: &str, user: &str, max_tokens: u32) -> Result<String, String> {
   let text = match provider {

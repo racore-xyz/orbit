@@ -4,6 +4,9 @@
 
 use crate::integrations;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::Emitter;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct FollowUp { pub at: String, pub done: bool }
@@ -156,6 +159,44 @@ fn split_sections(text: &str) -> (String, String) {
     }
     _ => (text.trim().to_string(), String::new()),
   }
+}
+
+/// Live ATS rewrite of the résumé, streaming deltas on `resume://<job_id>` so the UI can show
+/// the new version being written in real time. Emits {type:"delta"|"done"|"error"|"cancelled"}.
+pub fn improve_job(app: tauri::AppHandle, job_id: String, resume: String, target_role: String, flag: Arc<AtomicBool>) {
+  let topic = format!("resume://{job_id}");
+  let ws = crate::workspace::load().profile;
+  let lang = if ws.language == "ar" { "Arabic" } else { "English" };
+  let role = if target_role.trim().is_empty() { ws.target_roles.clone() } else { target_role };
+  let system = format!("You are an expert résumé writer and ATS (applicant tracking system) specialist. Rewrite the candidate's résumé so it parses cleanly through ATS and reads strongly for the target role, in {lang}.\nRules: keep every real fact — employers, titles, dates, tools, and metrics — and NEVER invent anything; turn duty statements into achievement bullets with a metric wherever the source has one; use standard ATS section headings in UPPERCASE (SUMMARY, EXPERIENCE, SKILLS, EDUCATION, PROJECTS); mirror the target role's keywords naturally; plain text only with simple \"- \" bullets, no tables, columns, or graphics. Output ONLY the finished résumé text, with no preamble or commentary.");
+  let user = format!("TARGET ROLE: {role}\n\nCURRENT RÉSUMÉ:\n{resume}");
+  let app_ref = app.clone();
+  let topic_ref = topic.clone();
+  let flag_ref = flag.clone();
+  let result = crate::llm::complete_stream(None, None, system, user, 2400, move |piece| {
+    if flag_ref.load(Ordering::Relaxed) { return; }
+    let _ = app_ref.emit(&topic_ref, serde_json::json!({ "type": "delta", "text": piece }));
+  });
+  if flag.load(Ordering::Relaxed) { let _ = app.emit(&topic, serde_json::json!({ "type": "cancelled" })); return; }
+  match result {
+    Ok(text) => { let _ = app.emit(&topic, serde_json::json!({ "type": "done", "text": text })); let _ = crate::workspace::log("workspace".into(), "Résumé rewritten (ATS)".into()); }
+    Err(e) => { let _ = app.emit(&topic, serde_json::json!({ "type": "error", "fatal": true, "error": e })); }
+  }
+}
+
+/// Write bytes (e.g. a generated .docx) to the user's Downloads folder and open them, returning the path.
+pub fn save_download(app: &tauri::AppHandle, name: String, bytes: Vec<u8>) -> Result<String, String> {
+  let base = std::env::var("USERPROFILE").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+  let dir = base.join("Downloads");
+  std::fs::create_dir_all(&dir).ok();
+  let safe: String = name.chars().map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' }).collect();
+  let file = if safe.trim_matches('_').is_empty() { "orbit-resume.docx".to_string() } else { safe };
+  let path = dir.join(&file);
+  std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+  let p = path.to_string_lossy().to_string();
+  use tauri_plugin_opener::OpenerExt;
+  let _ = app.opener().open_path(p.clone(), None::<&str>);
+  Ok(p)
 }
 
 /// Hiring demand per country, aggregated from the current pipeline, for the world map.

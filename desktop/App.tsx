@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { siAnthropic, siFacebook, siGooglegemini, siInstagram, siMistralai, siOpenrouter, siReddit, siTiktok, siX, siYoutube } from 'simple-icons';
-import { Activity, BarChart3, Bot, Briefcase, Check, ChevronRight, Clock, Compass, Copy, Download, ExternalLink, FileCheck, FileText, Globe2, History, Inbox, KeyRound, Lightbulb, MapPin, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
+import { Activity, BarChart3, Bot, Briefcase, Check, ChevronRight, Clock, Compass, Copy, Download, ExternalLink, FileCheck, FileText, GitCompare, Globe2, History, Inbox, KeyRound, Lightbulb, MapPin, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Upload, Users, X, Zap } from 'lucide-react';
 import {
   AppShell,
   Avatar,
@@ -2104,6 +2104,102 @@ function JobsDashboard({ t, ws, go }: { t: T; ws: WsSummary | null; go: (i: numb
   );
 }
 
+// ---- Résumé file I/O + word diff (all client-side, no libraries) ----
+async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  const ds = new DecompressionStream('deflate-raw');
+  const stream = new Blob([bytes]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+/** Extract plain text from a .docx (ZIP) using the central directory + DecompressionStream. */
+async function docxToText(buf: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buf); const dv = new DataView(buf); const dec = new TextDecoder();
+  let p = bytes.length - 22;
+  while (p >= 0 && dv.getUint32(p, true) !== 0x06054b50) p--;
+  if (p < 0) throw new Error('Not a valid .docx file');
+  const count = dv.getUint16(p + 10, true); let off = dv.getUint32(p + 16, true);
+  let xml: Uint8Array | null = null;
+  for (let n = 0; n < count && off + 46 <= bytes.length; n++) {
+    const method = dv.getUint16(off + 10, true);
+    const compSize = dv.getUint32(off + 20, true);
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const cmtLen = dv.getUint16(off + 32, true);
+    const localOff = dv.getUint32(off + 42, true);
+    const name = dec.decode(bytes.subarray(off + 46, off + 46 + nameLen));
+    if (name === 'word/document.xml') {
+      const lNameLen = dv.getUint16(localOff + 26, true);
+      const lExtra = dv.getUint16(localOff + 28, true);
+      const dataStart = localOff + 30 + lNameLen + lExtra;
+      const comp = bytes.subarray(dataStart, dataStart + compSize);
+      xml = method === 0 ? comp : await inflateRaw(comp);
+      break;
+    }
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  if (!xml) throw new Error('document.xml not found in .docx');
+  let s = dec.decode(xml);
+  s = s.replace(/<w:tab[^>]*\/>/g, '\t').replace(/<w:br[^>]*\/>/g, '\n').replace(/<\/w:p>/g, '\n').replace(/<[^>]+>/g, '');
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/\n{3,}/g, '\n\n').trim();
+}
+const CRC_TABLE = (() => { const tbl = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); tbl[n] = c >>> 0; } return tbl; })();
+function crc32(b: Uint8Array): number { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function catBytes(parts: Uint8Array[]): Uint8Array { let len = 0; for (const q of parts) len += q.length; const out = new Uint8Array(len); let o = 0; for (const q of parts) { out.set(q, o); o += q.length; } return out; }
+const _u16 = (n: number) => new Uint8Array([n & 0xff, (n >>> 8) & 0xff]);
+const _u32 = (n: number) => new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]);
+/** Minimal store-method (uncompressed) ZIP — enough for a valid .docx. */
+function zipStore(files: { name: string; data: Uint8Array }[]): Uint8Array {
+  const enc = new TextEncoder(); const locals: Uint8Array[] = []; const centrals: Uint8Array[] = []; let offset = 0;
+  for (const f of files) {
+    const nb = enc.encode(f.name); const crc = crc32(f.data); const sz = f.data.length;
+    const local = catBytes([_u32(0x04034b50), _u16(20), _u16(0), _u16(0), _u16(0), _u16(0), _u32(crc), _u32(sz), _u32(sz), _u16(nb.length), _u16(0), nb, f.data]);
+    locals.push(local);
+    centrals.push(catBytes([_u32(0x02014b50), _u16(20), _u16(20), _u16(0), _u16(0), _u16(0), _u16(0), _u32(crc), _u32(sz), _u32(sz), _u16(nb.length), _u16(0), _u16(0), _u16(0), _u16(0), _u32(0), _u32(offset), nb]));
+    offset += local.length;
+  }
+  const cd = catBytes(centrals);
+  const eocd = catBytes([_u32(0x06054b50), _u16(0), _u16(0), _u16(files.length), _u16(files.length), _u32(cd.length), _u32(offset), _u16(0)]);
+  return catBytes([...locals, cd, eocd]);
+}
+function xmlEsc(s: string) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+/** Build a simple, ATS-clean .docx from plain text (UPPERCASE lines become bold headings). */
+function buildDocx(text: string): Uint8Array {
+  const enc = new TextEncoder();
+  const paras = text.replace(/\r/g, '').split('\n').map((line) => {
+    if (!line.trim()) return '<w:p/>';
+    const trimmed = line.trim();
+    const heading = trimmed.length >= 3 && trimmed.length <= 40 && trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed) && !/[.:]/.test(trimmed);
+    const rpr = heading ? '<w:rPr><w:b/></w:rPr>' : '';
+    return `<w:p><w:r>${rpr}<w:t xml:space="preserve">${xmlEsc(line)}</w:t></w:r></w:p>`;
+  }).join('');
+  const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paras}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr></w:body></w:document>`;
+  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
+  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+  return zipStore([
+    { name: '[Content_Types].xml', data: enc.encode(ct) },
+    { name: '_rels/.rels', data: enc.encode(rels) },
+    { name: 'word/document.xml', data: enc.encode(doc) },
+  ]);
+}
+type DiffTok = { t: 'same' | 'add' | 'del'; s: string };
+/** Word-level diff (LCS) between the original and the rewrite. */
+function diffWords(a: string, b: string): DiffTok[] {
+  const split = (s: string) => s.match(/\s+|\S+/g) || [];
+  const A = split(a), B = split(b); const n = A.length, m = B.length;
+  if (n * m > 4_000_000) return [{ t: 'del', s: a }, { t: 'add', s: b }];
+  const dp: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out: DiffTok[] = []; let i = 0, j = 0;
+  const push = (tk: DiffTok['t'], s: string) => { const last = out[out.length - 1]; if (last && last.t === tk) last.s += s; else out.push({ t: tk, s }); };
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { push('same', A[i]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { push('del', A[i]); i++; }
+    else { push('add', B[j]); j++; }
+  }
+  while (i < n) { push('del', A[i]); i++; }
+  while (j < m) { push('add', B[j]); j++; }
+  return out;
+}
+
 function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () => Promise<void> }) {
   const [resume, setResume] = useState(ws?.workspace.profile.offer || '');
   const [portfolio, setPortfolio] = useState(ws?.workspace.profile.persona || '');
@@ -2111,20 +2207,100 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const [improved, setImproved] = useState('');
+  const [streaming, setStreaming] = useState(false);
+  const [baseAtStream, setBaseAtStream] = useState('');
+  const [view, setView] = useState<'diff' | 'new' | 'original'>('diff');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const jobRef = useRef<string | null>(null);
+  const un = useRef<UnlistenFn | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
   /* oxlint-disable react/react-compiler -- sync from workspace once */
   useEffect(() => { if (ws) { setResume(ws.workspace.profile.offer || ''); setPortfolio(ws.workspace.profile.persona || ''); setRole(ws.workspace.profile.target_roles || ws.workspace.profile.role || ''); } }, [ws?.workspace.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { if (jobRef.current) void invoke('job_cancel', { jobId: jobRef.current }); un.current?.(); }, []);
+  useEffect(() => { if (streaming && resultRef.current) resultRef.current.scrollTop = resultRef.current.scrollHeight; }, [improved, streaming]);
   /* oxlint-enable react/react-compiler */
   const save = async () => { if (!ws) return; setBusy('save'); try { await invoke('workspace_save', { workspace: { ...ws.workspace, profile: { ...ws.workspace.profile, offer: resume, persona: portfolio, target_roles: role } } }); await reload(); setMsg({ tone: 'green', text: t('Saved', 'تم الحفظ') }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
   const review = async () => { setBusy('review'); setMsg(null); try { await save(); setReport(await invoke<string>('jobs_review_resume', { resume, targetRole: role })); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const onUpload = async (f: File | undefined) => {
+    if (!f) return; setMsg(null);
+    try {
+      const lower = f.name.toLowerCase();
+      let text = '';
+      if (lower.endsWith('.docx')) text = await docxToText(await f.arrayBuffer());
+      else if (lower.endsWith('.txt') || lower.endsWith('.md')) text = await f.text();
+      else { setMsg({ tone: 'coral', text: t('Upload a .docx or .txt file (for PDF, paste the text).', 'ارفع ملف .docx أو .txt (لملفات PDF الصق النص).') }); return; }
+      if (!text.trim()) { setMsg({ tone: 'coral', text: t('Could not read any text from that file.', 'تعذّر قراءة أي نص من الملف.') }); return; }
+      setResume(text); setImproved(''); setMsg({ tone: 'green', text: t(`Loaded ${f.name} (${text.length} chars)`, `تم تحميل ${f.name} (${text.length} حرف)`) });
+    } catch (e) { setMsg({ tone: 'coral', text: `${t('Could not read file', 'تعذّرت قراءة الملف')}: ${String(e)}` }); }
+    finally { if (fileRef.current) fileRef.current.value = ''; }
+  };
+  const improve = async () => {
+    if (resume.trim().length < 60) { setMsg({ tone: 'coral', text: t('Add your résumé text first.', 'أضف نص سيرتك أولاً.') }); return; }
+    setMsg(null); await save();
+    const id = `resume-${Date.now()}`; jobRef.current = id; setImproved(''); setBaseAtStream(resume); setView('diff'); setStreaming(true);
+    un.current = await listen<{ type: string; text?: string; error?: string }>(`resume://${id}`, (ev) => {
+      const e = ev.payload;
+      if (e.type === 'delta') setImproved((prev) => prev + (e.text || ''));
+      else if (e.type === 'done') { if (e.text) setImproved(e.text); setStreaming(false); jobRef.current = null; un.current?.(); un.current = null; }
+      else if (e.type === 'error') { setMsg({ tone: 'coral', text: e.error || 'failed' }); setStreaming(false); jobRef.current = null; un.current?.(); un.current = null; }
+      else if (e.type === 'cancelled') { setStreaming(false); jobRef.current = null; un.current?.(); un.current = null; }
+    });
+    try { await invoke('jobs_resume_improve', { jobId: id, resume, targetRole: role }); }
+    catch (e) { setMsg({ tone: 'coral', text: String(e) }); setStreaming(false); jobRef.current = null; }
+  };
+  const cancel = async () => { if (jobRef.current) await invoke('job_cancel', { jobId: jobRef.current }); };
+  const useAsBase = async () => { setResume(improved); if (ws) { setBusy('use'); try { await invoke('workspace_save', { workspace: { ...ws.workspace, profile: { ...ws.workspace.profile, offer: improved, persona: portfolio, target_roles: role } } }); await reload(); setMsg({ tone: 'green', text: t('Saved as your base résumé.', 'تم الحفظ كسيرتك الأساسية.') }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } } };
+  const downloadDocx = async () => {
+    setBusy('docx'); setMsg(null);
+    try {
+      const bytes = buildDocx(improved);
+      const name = `${(ws?.workspace.profile.name || 'resume').replace(/\s+/g, '_')}_${(role || 'role').replace(/\s+/g, '_')}.docx`;
+      const path = await invoke<string>('jobs_save_download', { name, bytes: Array.from(bytes) });
+      setMsg({ tone: 'green', text: `${t('Saved & opened', 'تم الحفظ والفتح')}: ${path}` });
+    } catch (e) { setMsg({ tone: 'coral', text: `${t('Could not save .docx', 'تعذّر حفظ ملف .docx')}: ${String(e)}` }); }
+    finally { setBusy(''); }
+  };
+  const diff = (view === 'diff' && improved) ? diffWords(baseAtStream || resume, improved) : null;
+  const added = diff ? diff.filter((d) => d.t === 'add').reduce((n, d) => n + (d.s.match(/\S+/g)?.length || 0), 0) : 0;
+  const removed = diff ? diff.filter((d) => d.t === 'del').reduce((n, d) => n + (d.s.match(/\S+/g)?.length || 0), 0) : 0;
   return (
     <>
-      <PageHead eyebrow={t('Résumé & ATS', 'السيرة والـ ATS')} title={t('Resume & ATS check', 'السيرة وفحص ATS')} spark={false} sub={t('Paste your résumé and portfolio once. The model reviews ATS compatibility and rewrites weak points, and every tailored version is built from this.', 'الصق سيرتك ومعرض أعمالك مرة واحدة. النموذج يفحص توافق ATS ويعيد صياغة نقاط الضعف، وكل نسخة مخصصة تُبنى من هنا.')} actions={<><Btn variant="secondary" onClick={save} disabled={!!busy}>{busy === 'save' ? t('Saving…', 'جاري الحفظ…') : t('Save', 'حفظ')}</Btn><Btn icon={FileCheck} onClick={review} disabled={!!busy}>{busy === 'review' ? t('Analysing…', 'جاري التحليل…') : t('Run ATS review', 'شغّل فحص ATS')}</Btn></>} />
-      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
+      <input ref={fileRef} type="file" accept=".docx,.txt,.md" hidden onChange={(e) => void onUpload(e.target.files?.[0])} />
+      <PageHead eyebrow={t('Résumé & ATS', 'السيرة والـ ATS')} title={t('Resume & ATS check', 'السيرة وفحص ATS')} spark={false} sub={t('Upload your résumé (.docx) or paste it, then rewrite it live for ATS. Review the diff and export a clean .docx.', 'ارفع سيرتك (.docx) أو الصقها، ثم أعد صياغتها مباشرةً للـ ATS. راجع الفروقات وصدّر ملف .docx نظيف.')} actions={<><Btn variant="secondary" icon={Upload} onClick={() => fileRef.current?.click()} disabled={!!busy || streaming}>{t('Upload résumé', 'ارفع السيرة')}</Btn><Btn variant="secondary" onClick={save} disabled={!!busy || streaming}>{busy === 'save' ? t('Saving…', 'جاري الحفظ…') : t('Save', 'حفظ')}</Btn><Btn icon={Sparkles} variant="ai" onClick={improve} disabled={!!busy || streaming}>{streaming ? t('Rewriting…', 'جاري الصياغة…') : t('Rewrite live for ATS', 'أعد الصياغة مباشرةً')}</Btn></>} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} /><span style={{ wordBreak: 'break-all' }}>{msg.text}</span></div>}
       <div className="o-grid o-grid-2">
-        <Card><CardHead title={t('Base résumé', 'السيرة الأساسية')} sub={t('Plain text of your CV.', 'نص سيرتك الذاتية.')} /><label className="o-field">{t('Target role', 'الوظيفة المستهدفة')}<input value={role} onChange={(e) => setRole(e.target.value)} placeholder={t('e.g. Senior Backend Engineer', 'مثال: مهندس Backend أول')} /></label><textarea className="o-input" rows={16} style={{ width: '100%', height: 'auto', padding: 10, marginTop: 10, fontFamily: 'var(--font-sans)' }} value={resume} onChange={(e) => setResume(e.target.value)} placeholder={t('Paste your résumé text…', 'الصق نص سيرتك…')} /></Card>
+        <Card><CardHead title={t('Base résumé', 'السيرة الأساسية')} sub={t('Upload a .docx / .txt or paste. Editable.', 'ارفع .docx / .txt أو الصق. قابل للتعديل.')} action={<Btn variant="ghost" size="sm" icon={Upload} onClick={() => fileRef.current?.click()}>{t('Upload', 'رفع')}</Btn>} /><label className="o-field">{t('Target role', 'الوظيفة المستهدفة')}<input value={role} onChange={(e) => setRole(e.target.value)} placeholder={t('e.g. Senior Backend Engineer', 'مثال: مهندس Backend أول')} /></label><textarea className="o-input" rows={16} style={{ width: '100%', height: 'auto', padding: 10, marginTop: 10, fontFamily: 'var(--font-sans)' }} value={resume} onChange={(e) => setResume(e.target.value)} placeholder={t('Paste your résumé text, or upload a .docx…', 'الصق نص سيرتك، أو ارفع ملف .docx…')} /></Card>
         <Card><CardHead title={t('Portfolio / projects', 'معرض الأعمال / المشاريع')} sub={t('Links, projects, achievements used to tailor per job.', 'روابط ومشاريع وإنجازات تُستخدم للتخصيص لكل وظيفة.')} /><textarea className="o-input" rows={19} style={{ width: '100%', height: 'auto', padding: 10, fontFamily: 'var(--font-sans)' }} value={portfolio} onChange={(e) => setPortfolio(e.target.value)} placeholder={t('Projects, GitHub, live sites, notable results…', 'مشاريع، GitHub، مواقع حية، نتائج بارزة…')} /></Card>
       </div>
-      {report && <Card><CardHead title={t('ATS review', 'فحص ATS')} action={<Btn variant="ghost" size="sm" icon={Copy} onClick={() => navigator.clipboard.writeText(report)}>{t('Copy', 'نسخ')}</Btn>} /><Md text={report} /></Card>}
+      {(streaming || improved) && (
+        <Card>
+          <CardHead title={t('Live rewrite', 'الصياغة المباشرة')} sub={streaming ? t('Watching the model rewrite your résumé…', 'شاهد النموذج يعيد صياغة سيرتك…') : t('ATS-optimized version, aligned to a clean .docx.', 'نسخة محسّنة للـ ATS، متوافقة مع ملف .docx نظيف.')}
+            action={
+              <div className="o-flex">
+                {!streaming && improved && <div className="o-seg">
+                  <button className={view === 'diff' ? 'active' : ''} onClick={() => setView('diff')}><GitCompare size={13} /> {t('Diff', 'الفروقات')}</button>
+                  <button className={view === 'new' ? 'active' : ''} onClick={() => setView('new')}>{t('New', 'الجديد')}</button>
+                  <button className={view === 'original' ? 'active' : ''} onClick={() => setView('original')}>{t('Original', 'الأصلي')}</button>
+                </div>}
+                {streaming ? <Btn variant="ghost" size="sm" onClick={cancel}>{t('Stop', 'إيقاف')}</Btn> : improved && <>
+                  <Btn variant="ghost" size="sm" icon={Copy} onClick={() => navigator.clipboard.writeText(improved)}>{t('Copy', 'نسخ')}</Btn>
+                  <Btn variant="secondary" size="sm" onClick={useAsBase} disabled={!!busy}>{t('Use as base', 'اعتمدها أساساً')}</Btn>
+                  <Btn size="sm" icon={Download} onClick={downloadDocx} disabled={!!busy}>{busy === 'docx' ? t('Saving…', 'جاري الحفظ…') : t('Export .docx', 'صدّر .docx')}</Btn>
+                </>}
+              </div>
+            } />
+          {!streaming && improved && view === 'diff' && <div className="o-diff-legend"><span className="o-diff-add">+{added} {t('added', 'مضاف')}</span><span className="o-diff-del">−{removed} {t('removed', 'محذوف')}</span></div>}
+          <div className="o-resume-view" ref={resultRef}>
+            {streaming || view === 'new' ? <>{improved || (streaming ? '' : '')}{streaming && <span className="o-type-caret" />}</>
+              : view === 'original' ? (baseAtStream || resume)
+              : diff ? diff.map((d, i) => d.t === 'same' ? <span key={i}>{d.s}</span> : d.t === 'add' ? <ins key={i}>{d.s}</ins> : <del key={i}>{d.s}</del>)
+              : improved}
+          </div>
+        </Card>
+      )}
+      {report && <Card><CardHead title={t('ATS review', 'فحص ATS')} action={<Btn variant="ghost" size="sm" icon={FileCheck} onClick={review} disabled={!!busy}>{t('Re-run', 'إعادة')}</Btn>} /><Md text={report} /></Card>}
+      {!report && <Card><EmptyState icon={FileCheck} title={t('Run an ATS review', 'شغّل فحص ATS')} text={t('Get a score, missing keywords and concrete fixes for your target role.', 'احصل على درجة وكلمات مفتاحية ناقصة وإصلاحات محددة لوظيفتك المستهدفة.')} action={<Btn variant="secondary" size="sm" icon={FileCheck} onClick={review} disabled={!!busy}>{busy === 'review' ? t('Analysing…', 'جاري التحليل…') : t('Run ATS review', 'شغّل فحص ATS')}</Btn>} /></Card>}
     </>
   );
 }

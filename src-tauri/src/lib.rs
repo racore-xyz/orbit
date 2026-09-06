@@ -447,6 +447,17 @@ async fn jobs_review_resume(resume: String, target_role: String) -> Result<Strin
 async fn jobs_tailor(id: String) -> Result<jobs::JobsState, String> { blocking!(jobs::tailor(id)) }
 #[tauri::command]
 async fn jobs_demand() -> Result<serde_json::Value, String> { Ok(blocking!(jobs::demand())) }
+/// Start a live ATS rewrite of the résumé; deltas stream on `resume://<job_id>`. Cancel via job_cancel.
+#[tauri::command]
+fn jobs_resume_improve(app: tauri::AppHandle, job_id: String, resume: String, target_role: String) -> Result<(), String> {
+  if resume.trim().len() < 60 { return Err("Add your résumé text first (at least a few lines).".into()); }
+  let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+  job_flags().lock().map_err(|e| e.to_string())?.insert(job_id.clone(), flag.clone());
+  std::thread::spawn(move || { jobs::improve_job(app, job_id.clone(), resume, target_role, flag); let _ = job_flags().lock().map(|mut m| m.remove(&job_id)); });
+  Ok(())
+}
+#[tauri::command]
+async fn jobs_save_download(app: tauri::AppHandle, name: String, bytes: Vec<u8>) -> Result<String, String> { jobs::save_download(&app, name, bytes) }
 
 #[tauri::command]
 fn provider_env_status() -> serde_json::Value {
@@ -459,7 +470,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand, jobs_resume_improve, jobs_save_download])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }
