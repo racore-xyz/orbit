@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 pub struct Limits {
   /// Max outbound emails per calendar day (Gmail app-password accounts: Google allows ~500/day, 100 is a safe outreach default).
   pub smtp_per_day: u32,
+  /// Optional emergency kill-switch for the legacy global SMTP ceiling. Disabled by default;
+  /// mailbox caps are the normal source of truth for multi-mailbox sending.
+  #[serde(default)]
+  pub smtp_global_kill_switch: bool,
   /// Minimum seconds between two outbound emails (protects sender reputation and provider burst limits).
   pub smtp_min_gap_s: u32,
   /// Seconds between Exa web-search calls on the shared endpoint / with your own key.
@@ -26,7 +30,7 @@ pub struct Limits {
 }
 
 impl Default for Limits {
-  fn default() -> Self { Self { smtp_per_day: 100, smtp_min_gap_s: 20, exa_gap_shared_s: 2.5, exa_gap_keyed_s: 1.0, jina_gap_s: 1.0, reddit_gap_s: 1.2, exa_calls_per_run: 25, enrich_per_run: 50 } }
+  fn default() -> Self { Self { smtp_per_day: 100, smtp_global_kill_switch: false, smtp_min_gap_s: 20, exa_gap_shared_s: 2.5, exa_gap_keyed_s: 1.0, jina_gap_s: 1.0, reddit_gap_s: 1.2, exa_calls_per_run: 25, enrich_per_run: 50 } }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -59,7 +63,7 @@ fn send_gate() -> &'static Mutex<Option<Instant>> { static G: OnceLock<Mutex<Opt
 pub fn gate_send() -> Result<(), String> {
   let lim = limits();
   let q = load();
-  if q.usage.smtp_sent >= lim.smtp_per_day {
+  if lim.smtp_global_kill_switch && q.usage.smtp_sent >= lim.smtp_per_day {
     return Err(format!("Daily send limit reached ({}/{}). Raise it under Settings → Rate limits, or continue tomorrow. This protects your Gmail/SMTP account from being throttled or flagged.", q.usage.smtp_sent, lim.smtp_per_day));
   }
   let gap = Duration::from_secs(lim.smtp_min_gap_s as u64);
@@ -77,5 +81,18 @@ pub fn record_llm() { let mut q = load(); q.usage.llm_calls += 1; let _ = save(&
 pub fn status() -> serde_json::Value {
   let q = load();
   let l = q.limits.clone().unwrap_or_default();
-  serde_json::json!({ "limits": l, "usage": q.usage, "defaults": Limits::default(), "path": path().to_string_lossy() })
+  let mb = crate::integrations::load().mailboxes;
+  let enabled: Vec<_> = mb.iter().filter(|m| m.enabled).collect();
+  let capacity: u32 = enabled.iter().map(|m| m.daily_cap).sum();
+  let sent: u32 = enabled.iter().map(|m| if m.sent_day == today() { m.sent_today } else { 0 }).sum();
+  serde_json::json!({ "limits": l, "usage": q.usage, "defaults": Limits::default(), "mailbox_capacity": { "enabled": enabled.len(), "total": capacity, "sent_today": sent, "remaining": capacity.saturating_sub(sent) }, "path": path().to_string_lossy() })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  #[test]
+  fn legacy_global_limit_is_disabled_by_default() { assert!(!Limits::default().smtp_global_kill_switch); }
+  #[test]
+  fn global_kill_switch_is_explicit() { let mut l = Limits::default(); l.smtp_global_kill_switch = true; assert!(l.smtp_global_kill_switch); }
 }

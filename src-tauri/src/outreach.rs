@@ -71,7 +71,10 @@ pub struct Template { pub id: String, pub name: String, pub subject: String, pub
 fn default_true() -> bool { true }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
-pub struct State { pub threads: Vec<Thread>, pub sequences: Vec<Sequence>, pub style: Style, pub settings: Settings, pub updated_at: String, #[serde(default)] pub templates: Vec<Template> }
+pub struct Campaign { pub id: String, pub name: String, pub thread_ids: Vec<String>, pub template_id: Option<String>, pub variant_mode: String, pub sequence_id: Option<String>, pub scheduled_at: String, pub status: String, pub created_at: String }
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct State { pub threads: Vec<Thread>, pub sequences: Vec<Sequence>, pub style: Style, pub settings: Settings, pub updated_at: String, #[serde(default)] pub templates: Vec<Template>, #[serde(default)] pub campaigns: Vec<Campaign> }
 
 fn path() -> std::path::PathBuf {
   let base = std::env::var("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
@@ -102,6 +105,14 @@ pub fn save(mut s: State) -> Result<State, String> {
   if let Some(d) = p.parent() { std::fs::create_dir_all(d).map_err(|e| e.to_string())?; }
   std::fs::write(&p, serde_json::to_vec_pretty(&s).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
   Ok(s)
+}
+
+pub fn create_campaign(name: String, thread_ids: Vec<String>, template_id: Option<String>, variant_mode: String, sequence_id: Option<String>, scheduled_at: String) -> Result<State, String> {
+  let mut st = load();
+  let ids: Vec<String> = thread_ids.into_iter().filter(|id| st.threads.iter().any(|t| &t.id == id && !t.email.trim().is_empty())).collect();
+  if ids.is_empty() { return Err("Select at least one CRM lead with an email address".into()); }
+  st.campaigns.push(Campaign { id: format!("campaign-{}", integrations::now_iso().replace(['-', ':'], "")), name: if name.trim().is_empty() { "Untitled campaign".into() } else { name }, thread_ids: ids, template_id, variant_mode: if variant_mode.is_empty() { "rotate".into() } else { variant_mode }, sequence_id, scheduled_at, status: "scheduled".into(), created_at: integrations::now_iso() });
+  save(st)
 }
 
 fn add_days(iso: &str, days: u32) -> String {
@@ -521,4 +532,125 @@ pub fn dashboard() -> serde_json::Value {
     "recent": recent_json,
     "insights": { "best_hour": best_hour, "followup_share": if total_replied > 0 { Some(rate(fu_replies, total_replied)) } else { None }, "best_template": perf.first().cloned(), "pending_drafts": pending, "drafts": drafts, "due": due(&st).len() },
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn tpl() -> Template {
+    Template { id: "t1".into(), name: "First".into(), subject: "Hi {{company}}".into(), body: "Hello {{first_name}}".into(),
+      variants: vec![
+        Variant { id: "v1".into(), label: "A".into(), subject: "s1".into(), body: "b1".into(), angle: String::new() },
+        Variant { id: "v2".into(), label: "B".into(), subject: "s2".into(), body: "b2".into(), angle: String::new() },
+      ], created_at: String::new(), updated_at: String::new(), in_rotation: true }
+  }
+
+  #[test]
+  fn explicit_variant_is_selected() {
+    let t = tpl();
+    let (v, subj, _) = pick_variant(&t, "any", Some("v2"), "rotate");
+    assert_eq!(v.unwrap().id, "v2");
+    assert_eq!(subj, "s2");
+  }
+
+  #[test]
+  fn explicit_base_is_selected() {
+    let t = tpl();
+    let (v, subj, _) = pick_variant(&t, "any", Some("base"), "rotate");
+    assert!(v.is_none());
+    assert_eq!(subj, "Hi {{company}}");
+  }
+
+  #[test]
+  fn rotation_spreads_across_base_and_variants() {
+    let t = tpl();
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..60 {
+      let (v, _, _) = pick_variant(&t, &format!("thread-{i}"), None, "rotate");
+      seen.insert(v.map(|x| x.id.clone()).unwrap_or_else(|| "base".into()));
+    }
+    // base + 2 variants should all appear over many thread ids
+    assert!(seen.contains("base") && seen.contains("v1") && seen.contains("v2"), "got {seen:?}");
+  }
+
+  #[test]
+  fn base_mode_always_uses_base() {
+    let t = tpl();
+    for i in 0..10 {
+      let (v, _, _) = pick_variant(&t, &format!("x{i}"), None, "base");
+      assert!(v.is_none());
+    }
+  }
+
+  #[test]
+  fn leftover_placeholders_are_stripped() {
+    assert_eq!(regex_lite_replace("Hi {{unknown}} there"), "Hi  there");
+    assert_eq!(regex_lite_replace("plain text"), "plain text");
+    assert_eq!(regex_lite_replace("{{a}}{{b}}end"), "end");
+  }
+
+  #[test]
+  fn iso_parse_roundtrips() {
+    let secs = 1_780_000_000u64;
+    let iso = integrations::iso_from_secs(secs);
+    assert_eq!(parse_iso(&iso), Some(secs));
+  }
+}
+
+/// Execute a scheduled campaign: fill the template per contact, rotate mailboxes, send the first email
+/// with spacing and per-mailbox caps, stream progress on `jobs://<job_id>`, notify on finish.
+pub fn campaign_run_job(app: tauri::AppHandle, job_id: String, campaign_id: String, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+  use tauri::Emitter;
+  let topic = format!("jobs://{job_id}");
+  let st = load();
+  let Some(camp) = st.campaigns.iter().find(|c| c.id == campaign_id).cloned() else {
+    let _ = app.emit(&topic, serde_json::json!({ "type": "error", "error": "campaign not found" }));
+    return;
+  };
+  // Only threads that have not been contacted yet.
+  let targets: Vec<String> = camp.thread_ids.iter().filter(|id| st.threads.iter().any(|t| &t.id == *id && !t.messages.iter().any(|m| m.direction == "out") && !t.email.trim().is_empty())).cloned().collect();
+  let total = targets.len();
+  // mark running
+  { let mut s = load(); if let Some(c) = s.campaigns.iter_mut().find(|c| c.id == campaign_id) { c.status = "running".into(); } let _ = save(s); }
+  let _ = app.emit(&topic, serde_json::json!({ "type": "start", "job": "campaign", "campaign": camp.name, "total": total, "percent": 0 }));
+  let (mut done, mut failed) = (0usize, 0usize);
+  let mut last_err = String::new();
+  for (i, id) in targets.iter().enumerate() {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+      { let mut s = load(); if let Some(c) = s.campaigns.iter_mut().find(|c| c.id == campaign_id) { c.status = "paused".into(); } let _ = save(s); }
+      let _ = app.emit(&topic, serde_json::json!({ "type": "cancelled", "done": done, "total": total }));
+      return;
+    }
+    let name = load().threads.iter().find(|t| &t.id == id).map(|t| t.name.clone()).unwrap_or_default();
+    let _ = app.emit(&topic, serde_json::json!({ "type": "progress", "index": i + 1, "total": total, "label": name, "percent": (i * 100 / total.max(1)) }));
+    // Fill (rotates template/variant) then send (rotates mailbox, gates spacing, records).
+    let filled = fill_for_thread(id.clone(), camp.template_id.clone(), None);
+    match filled.and_then(|f| {
+      let subject = f["subject"].as_str().unwrap_or("").to_string();
+      let body = f["body"].as_str().unwrap_or("").to_string();
+      let vid = f["variant_id"].as_str().map(|s| s.to_string());
+      send(id.clone(), subject, body, 1, camp.template_id.clone(), vid)
+    }) {
+      Ok(_) => { done += 1; let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "label": name, "ok": true, "percent": ((i + 1) * 100 / total.max(1)) })); }
+      Err(e) => {
+        failed += 1; last_err = e.clone();
+        let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "label": name, "ok": false, "error": e, "percent": ((i + 1) * 100 / total.max(1)) }));
+        // Stop the whole run on setup-level errors (no mailbox, no template, every cap reached).
+        if e.contains("mailbox") || e.contains("template") || e.contains("cap") || e.contains("No LLM") { break; }
+      }
+    }
+  }
+  { let mut s = load(); if let Some(c) = s.campaigns.iter_mut().find(|c| c.id == campaign_id) { c.status = if failed == 0 { "sent".into() } else { "partial".into() }; } let _ = save(s); }
+  let title = if failed == 0 { format!("Campaign “{}”: {done} sent", camp.name) } else { format!("Campaign “{}”: {done} sent, {failed} failed", camp.name) };
+  let text = if failed == 0 { "Every contact received the first email. Follow-ups are scheduled.".to_string() } else { format!("Last error: {last_err}") };
+  let _ = crate::workspace::notify(Some(&app), "campaign", &title, &text, Some("outreach"));
+  let _ = crate::workspace::log("outreach".into(), format!("Campaign '{}' ran: {done} sent, {failed} failed", camp.name));
+  let _ = app.emit(&topic, serde_json::json!({ "type": "done", "done": done, "failed": failed, "total": total, "percent": 100 }));
+}
+
+pub fn campaign_delete(id: String) -> Result<State, String> {
+  let mut st = load();
+  st.campaigns.retain(|c| c.id != id);
+  save(st)
 }

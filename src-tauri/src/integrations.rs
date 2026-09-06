@@ -502,3 +502,25 @@ pub fn exa_status() -> serde_json::Value {
   let has = secret_get("exa-api-key").is_some() && exa_config_path().exists();
   serde_json::json!({ "configured": has, "config": exa_config_path().to_string_lossy() })
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn civil_date_roundtrip() {
+    for &(y, m, d) in &[(2026, 9, 4), (2000, 1, 1), (1970, 1, 1), (2024, 2, 29), (2100, 12, 31)] {
+      let days = days_from_civil(y, m, d);
+      assert_eq!(civil_from_days(days), (y, m, d), "for {y}-{m}-{d}");
+    }
+  }
+
+  #[test]
+  fn iso_from_secs_formats_utc() {
+    let iso = iso_from_secs(1_780_000_000);
+    // format: YYYY-MM-DDTHH:MM:SSZ
+    assert_eq!(iso.len(), 20, "got {iso}");
+    assert!(iso.ends_with('Z') && &iso[10..11] == "T", "got {iso}");
+    assert!(iso.starts_with("2026-"), "got {iso}");
+  }
+}

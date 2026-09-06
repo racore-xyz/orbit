@@ -21,7 +21,6 @@ import {
   Legend,
   Insight,
   Brand,
-  ModuleHero,
   PageHead,
   Progress,
   Row,
@@ -39,6 +38,8 @@ import {
 
 
 type T = (en: string, ar: string) => string;
+let __seq = 0;
+function jobSeq() { __seq += 1; return `${__seq}-${Math.random().toString(36).slice(2, 8)}`; }
 const TAB = { dashboard: 0, leads: 1, research: 2, social: 3, outreach: 4, templates: 5, crm: 6, campaigns: 7, agents: 8, integrations: 9, history: 10, settings: 11 } as const;
 
 export default function DesktopApp() {
@@ -127,7 +128,7 @@ export default function DesktopApp() {
       {tab === TAB.dashboard && <Dashboard t={t} go={setTab} ws={ws} onAutodraft={startAutodraft} jobRunning={!!job && !job.done} />}
       {tab === TAB.leads && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
       {tab === TAB.crm && <CrmPage t={t} go={setTab} />}
-      {tab === TAB.campaigns && <Module t={t} title={t('Campaigns', 'الحملات')} icon={Send} action={t('Create campaign', 'إنشاء حملة')} />}
+      {tab === TAB.campaigns && <CampaignsPage t={t} />}
       {tab === TAB.outreach && <Outreach t={t} seed={outreachSeed} onSeeded={() => setOutreachSeed(null)} />}
       {tab === TAB.templates && <TemplatesPage t={t} />}
       {tab === TAB.research && <LeadFinder t={t} mode="research" openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
@@ -257,21 +258,6 @@ function Dashboard({ t, go, ws, onAutodraft, jobRunning }: { t: T; go: (i: numbe
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function Module({ t, title, icon, action }: { t: T; title: string; icon: any; action: string }) {
-  const [message, setMessage] = useState('');
-  return (
-    <>
-      <PageHead eyebrow={t('Workspace module', 'وحدة مساحة العمل')} title={title} sub={t('This module starts empty until you connect a source or add a record.', 'تبدأ هذه الوحدة فارغة حتى تربط مصدراً أو تضيف سجلاً.')} actions={<Btn icon={Zap} onClick={() => setMessage(t(`${action} is ready. Connect a source to create real records.`, `${action} جاهز. اربط مصدرًا لإنشاء سجلات حقيقية.`))}>{action}</Btn>} />
-      {message && <div className="o-result"><Check size={16} />{message}</div>}
-      <ModuleHero icon={icon} title={t('No records yet', 'لا توجد سجلات بعد')} text={t('Real data will appear here after a connected source returns results.', 'ستظهر البيانات الحقيقية هنا بعد أن يعيد مصدر متصل نتائج.')} />
-      <div className="o-grid o-grid-3">
-        <StatCard icon={Activity} label={t('Active workflows', 'سير العمل النشط')} value="0" trend={null} tone="violet" />
-        <StatCard icon={Check} label={t('Completed today', 'المكتمل اليوم')} value="0" trend={null} tone="green" />
-        <StatCard icon={Users} label={t('Records synced', 'السجلات المتزامنة')} value="0" trend={null} tone="sky" />
-      </div>
-    </>
-  );
-}
 
 
 
@@ -933,7 +919,43 @@ type OVariant = { id: string; label: string; subject: string; body: string; angl
 type OTemplate = { id: string; name: string; subject: string; body: string; variants: OVariant[]; created_at: string; updated_at: string; in_rotation?: boolean };
 type OThread = { id: string; lead_id?: string | null; name: string; company?: string | null; email: string; status: string; messages: OMsg[]; pending_draft?: { subject: string; body: string; step: number; at: string; source: string } | null; followup_count: number; max_followups: number; interval_days: number; next_followup_at?: string | null; last_activity: string; sequence_id?: string | null; lead?: Lead | null; notes?: string | null; unread: boolean };
 type OStep = { delay_days: number; subject: string; body: string };
-type OState = { threads: OThread[]; sequences: { id: string; name: string; steps: OStep[] }[]; style: { samples: string[]; guide: string; signature: string; learned: { draft: string; final_text: string; at: string }[]; language: string }; settings: { send_via: string; auto_followup: boolean; default_max_followups: number; default_interval_days: number; default_template_id?: string | null; variant_mode: string }; updated_at: string; templates: OTemplate[] };
+type OState = { threads: OThread[]; sequences: { id: string; name: string; steps: OStep[] }[]; style: { samples: string[]; guide: string; signature: string; learned: { draft: string; final_text: string; at: string }[]; language: string }; settings: { send_via: string; auto_followup: boolean; default_max_followups: number; default_interval_days: number; default_template_id?: string | null; variant_mode: string }; updated_at: string; templates: OTemplate[]; campaigns?: { id: string; name: string; thread_ids: string[]; template_id?: string | null; scheduled_at: string; status: string }[] };
+
+function CampaignsPage({ t }: { t: T }) {
+  const [st, setSt] = useState<OState | null>(null); const [selected, setSelected] = useState<string[]>([]); const [name, setName] = useState(''); const [template, setTemplate] = useState(''); const [schedule, setSchedule] = useState(new Date().toISOString().slice(0, 16)); const [msg, setMsg] = useState('');
+  const [mb, setMb] = useState<MBox[]>([]);
+  const [job, setJob] = useState<{ id: string; label: string; percent: number; done?: boolean } | null>(null);
+  const jobU = useRef<UnlistenFn | null>(null);
+  const load = () => { void Promise.all([invoke<OState>('outreach_state'), invoke<{ mailboxes: MBox[] }>('integrations_status')]).then(([s, i]) => { setSt(s); setMb(i.mailboxes || []); setTemplate((tt) => tt || s.settings.default_template_id || s.templates[0]?.id || ''); }).catch((e) => setMsg(String(e))); };
+  /* oxlint-disable react/react-compiler -- load once; clean up listener */
+  useEffect(() => { load(); return () => { jobU.current?.(); }; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const runCampaign = async (cid: string, cname: string) => {
+    const id = `campaign-run-${jobSeq()}`;
+    try { if (!(await isPermissionGranted())) await requestPermission(); } catch { /* ignore */ }
+    jobU.current?.();
+    jobU.current = await listen<Record<string, unknown>>(`jobs://${id}`, (ev) => {
+      const e = ev.payload as { type: string; percent?: number; label?: string; done?: number; total?: number; failed?: number; error?: string };
+      if (e.type === 'start') setJob({ id, label: t(`Sending “${cname}” to ${e.total} contacts`, `إرسال “${cname}” إلى ${e.total} جهة`), percent: 0 });
+      else if (e.type === 'progress' || e.type === 'item') setJob({ id, label: e.label || cname, percent: e.percent ?? 0 });
+      else if (e.type === 'done') { setJob({ id, label: t(`${e.done} sent${e.failed ? `, ${e.failed} failed` : ''}`, `${e.done} مُرسل${e.failed ? `، ${e.failed} فشل` : ''}`), percent: 100, done: true }); jobU.current?.(); jobU.current = null; load(); setTimeout(() => setJob((j) => (j?.id === id ? null : j)), 8000); }
+      else if (e.type === 'error' || e.type === 'cancelled') { setJob({ id, label: e.error || t('Stopped', 'توقف'), percent: 100, done: true }); jobU.current?.(); jobU.current = null; load(); }
+    });
+    try { await invoke('outreach_campaign_run', { jobId: id, campaignId: cid }); } catch (e) { setMsg(String(e)); }
+  };
+  const delCampaign = async (cid: string) => { try { const s = await invoke<OState>('outreach_campaign_delete', { id: cid }); setSt(s); } catch (e) { setMsg(String(e)); } };
+  if (!st) return <EmptyState icon={Send} title={t('Loading campaigns…', 'جاري تحميل الحملات…')} text="" />;
+  const leads = st.threads.filter((x) => x.email); const active = mb.filter((x) => x.enabled); const cap = active.reduce((n, x) => n + x.daily_cap, 0); const toggle = (id: string) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const create = async () => { try { const s = await invoke<OState>('outreach_create_campaign', { name, threadIds: selected, templateId: template || null, variantMode: 'rotate', sequenceId: st.sequences[0]?.id || null, scheduledAt: new Date(schedule).toISOString() }); setSt(s); setSelected([]); setName(''); load(); setMsg(t('Campaign scheduled. Click Run now below to send the first email to every contact, rotated across your mailboxes.', 'تمت جدولة الحملة. اضغط تشغيل الآن بالأسفل لإرسال الرسالة الأولى لكل جهة، موزعة على صناديقك.')); } catch (e) { setMsg(String(e)); } };
+  return <><PageHead eyebrow={t('Outbound orchestration', 'تنسيق الإرسال')} title={t('Campaigns', 'الحملات')} spark={false} sub={t('Select CRM leads, build a sequence, and schedule a paced campaign across your enabled mailboxes.', 'اختر عملاء CRM، أنشئ تسلسلاً، وجدول حملة موزعة عبر صناديق الإرسال المفعّلة.')} actions={<Btn icon={Send} onClick={create} disabled={!selected.length}>{t('Schedule campaign', 'جدولة الحملة')}</Btn>} />
+    {msg && <div className="o-result"><Check size={16} />{msg}</div>}<div className="o-grid o-grid-2"><Card><CardHead title={t('Campaign setup', 'إعداد الحملة')} sub={t('Templates, variants and follow-ups use the same Outreach rules.', 'القوالب والنسخ والمتابعات تستخدم قواعد التواصل نفسها.')} /><div className="o-form-grid"><label className="o-field">{t('Name', 'الاسم')}<input className="o-input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('Spring outreach', 'حملة الربيع')} /></label><label className="o-field">{t('Template', 'القالب')}<select className="o-input" value={template} onChange={(e) => setTemplate(e.target.value)}><option value="">{t('No template / draft in Outreach', 'بدون قالب / مسودة في التواصل')}</option>{st.templates.map((x) => <option key={x.id} value={x.id}>{x.name} · {x.variants.length} {t('variants', 'نسخ')}</option>)}</select></label><label className="o-field">{t('Start at', 'تبدأ في')}<input className="o-input" type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} /></label><label className="o-field">{t('Follow-ups', 'المتابعات')}<input className="o-input" value={`${st.settings.default_max_followups} · ${st.settings.default_interval_days} ${t('days', 'أيام')}`} readOnly /></label></div></Card>
+      <Card><CardHead title={t('Rotation preview', 'معاينة التناوب')} sub={t('Enabled mailbox caps determine effective daily capacity.', 'حدود الصناديق المفعّلة تحدد السعة اليومية الفعلية.')} /><div className="o-grid o-grid-2"><StatCard icon={Mail} label={t('Effective capacity', 'السعة الفعلية')} value={`${cap}/day`} trend={null} tone="green" /><StatCard icon={Users} label={t('Selected leads', 'العملاء المختارون')} value={String(selected.length)} trend={null} tone="violet" /></div>{active.map((x) => <div className="o-row" key={x.id}><IconTile icon={Mail} tone="green" /><div><b>{x.label}</b><small>{x.from} · {x.sent_today}/{x.daily_cap} {t('today', 'اليوم')}</small></div><Chip tone="neutral">{t('rotates', 'يتناوب')}</Chip></div>)}{!active.length && <p className="o-note">{t('Connect an enabled mailbox under Integrations before scheduling.', 'اربط صندوق إرسال مفعّلاً من التكاملات قبل الجدولة.')}</p>}</Card></div>
+    <Card><CardHead title={t('Select CRM leads', 'اختر عملاء CRM')} sub={t(`${selected.length} selected · only contacts with email can be scheduled`, `${selected.length} مختار · يمكن جدولة جهات الاتصال التي لديها إيميل فقط`)} action={<Btn size="sm" variant="secondary" onClick={() => setSelected(selected.length === leads.length ? [] : leads.map((x) => x.id))}>{t('Select all', 'اختيار الكل')}</Btn>} />{leads.map((x) => <label className="o-row" key={x.id}><input type="checkbox" checked={selected.includes(x.id)} onChange={() => toggle(x.id)} /><Avatar text={(x.name || x.email)[0]} /><div><b>{x.name}</b><small>{x.company || '—'} · {x.email}</small></div><Chip tone={x.status === 'draft' ? 'neutral' : 'violet'}>{x.status}</Chip></label>)}{!leads.length && <EmptyState icon={Users} title={t('No CRM leads yet', 'لا يوجد عملاء CRM بعد')} text={t('Add leads with emails to Outreach first.', 'أضف عملاء لديهم إيميلات إلى التواصل أولاً.')} />}</Card>
+    {job && <div className={`o-loader${job.done ? '' : ''}`}><div className="o-loader-head"><span className={`o-spinner${job.done ? ' done' : ''}`} /><b>{job.percent}%</b><span className="o-loader-label">{job.label}</span></div><div className="o-progress lg"><i style={{ width: `${job.percent}%` }} /></div></div>}
+    <Card><CardHead title={t('Scheduled campaigns', 'الحملات المجدولة')} sub={t('Run a campaign to send the first email to every contact now, rotating mailboxes with your spacing and caps.', 'شغّل حملة لإرسال الرسالة الأولى لكل جهة الآن، بتناوب الصناديق مع التباعد والحدود.')} />
+      {(st.campaigns || []).length ? <Table columns={[t('Campaign', 'الحملة'), t('Contacts', 'جهات'), t('Status', 'الحالة'), t('Scheduled', 'مجدولة'), '']}>{(st.campaigns || []).slice().reverse().map((c) => <tr key={c.id}><td><b>{c.name}</b></td><td>{c.thread_ids.length}</td><td><Chip tone={c.status === 'sent' ? 'green' : c.status === 'running' ? 'violet' : c.status === 'partial' ? 'orange' : c.status === 'paused' ? 'coral' : 'neutral'}>{c.status}</Chip></td><td>{new Date(c.scheduled_at).toLocaleString()}</td><td><div className="o-flex">{(c.status === 'scheduled' || c.status === 'partial' || c.status === 'paused') && <Btn size="sm" icon={Send} onClick={() => runCampaign(c.id, c.name)} disabled={!!job && !job.done || !active.length}>{t('Run now', 'تشغيل الآن')}</Btn>}<button className="o-more" aria-label="Delete" onClick={() => delCampaign(c.id)}><Trash2 size={14} /></button></div></td></tr>)}</Table> : <EmptyState icon={Send} title={t('No campaigns yet', 'لا توجد حملات بعد')} text={t('Select leads above and schedule your first campaign.', 'اختر عملاء بالأعلى وجدول حملتك الأولى.')} />}</Card>
+  </>;
+}
 
 const STATUS_TONE: Record<string, Tone> = { draft: 'neutral', sent: 'violet', followup_due: 'orange', replied: 'green', closed: 'neutral', bounced: 'coral' };
 
@@ -1827,7 +1849,7 @@ function SocialPage({ t, openRunId, onOpened }: { t: T; openRunId?: string | nul
   );
 }
 
-type QuotaLimits = { smtp_per_day: number; smtp_min_gap_s: number; exa_gap_shared_s: number; exa_gap_keyed_s: number; jina_gap_s: number; reddit_gap_s: number; exa_calls_per_run: number; enrich_per_run: number };
+type QuotaLimits = { smtp_per_day: number; smtp_global_kill_switch: boolean; smtp_min_gap_s: number; exa_gap_shared_s: number; exa_gap_keyed_s: number; jina_gap_s: number; reddit_gap_s: number; exa_calls_per_run: number; enrich_per_run: number };
 type QuotaStatus = { limits: QuotaLimits; usage: { day: string; smtp_sent: number; llm_calls: number; last_send_at?: string | null }; defaults: QuotaLimits };
 
 /** Settings → Rate limits: one place for every outbound channel's protection, with today's usage. */
@@ -1840,7 +1862,7 @@ function QuotaCard({ t }: { t: T }) {
   useEffect(() => { void load(); }, []);
   /* oxlint-enable react/react-compiler */
   if (!q || !l) return null;
-  const f = (k: keyof QuotaLimits, label: string, hint: string, step = 1) => (
+  const f = (k: Exclude<keyof QuotaLimits, 'smtp_global_kill_switch'>, label: string, hint: string, step = 1) => (
     <label className="o-field" key={k} title={hint}>{label}<input type="number" min={0} step={step} value={l[k]} onChange={(e) => setL({ ...l, [k]: Number(e.target.value) })} /><small className="o-muted" style={{ fontWeight: 400 }}>{hint}</small></label>
   );
   return (
@@ -1858,7 +1880,7 @@ function QuotaCard({ t }: { t: T }) {
         {f('jina_gap_s', t('Jina Reader gap (s)', 'فاصل Jina Reader (ث)'), t('Between page reads during enrichment.', 'بين قراءات الصفحات أثناء الإثراء.'), 0.5)}
         {f('reddit_gap_s', t('Arctic Shift gap (s)', 'فاصل Arctic Shift (ث)'), t('Between Reddit archive requests.', 'بين طلبات أرشيف Reddit.'), 0.1)}
       </div>
-      <div className="o-flex o-mt">
+      <div className="o-flex o-mt"><label className="o-flex" title={t('Emergency-only global ceiling. Leave off for mailbox-based capacity.', 'سقف طوارئ عالمي فقط. اتركه متوقفاً لاستخدام سعة الصناديق.')}>{t('Legacy global kill-switch', 'مفتاح الإيقاف العالمي القديم')} <Switch on={l.smtp_global_kill_switch} onChange={(v) => setL({ ...l, smtp_global_kill_switch: v })} label="Global kill switch" /></label>
         <Btn size="sm" onClick={async () => { try { await invoke('quota_set', { limits: l }); setMsg(''); await load(); } catch (e) { setMsg(String(e)); } }}>{t('Save limits', 'حفظ الحدود')}</Btn>
         <Btn size="sm" variant="ghost" onClick={() => setL(q.defaults)}>{t('Reset to defaults', 'إعادة الافتراضيات')}</Btn>
         <span className="o-note" style={{ margin: 0 }}>{t('LLM requests per minute are set per provider under AI Agents.', 'طلبات النماذج في الدقيقة تُضبط لكل مزوّد تحت وكلاء الذكاء الاصطناعي.')}</span>

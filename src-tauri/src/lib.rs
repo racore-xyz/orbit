@@ -309,6 +309,8 @@ async fn llm_complete(provider: Option<String>, model: Option<String>, system: S
 #[tauri::command]
 async fn outreach_state() -> Result<outreach::State, String> { Ok(blocking!(outreach::load())) }
 #[tauri::command]
+async fn outreach_create_campaign(name: String, thread_ids: Vec<String>, template_id: Option<String>, variant_mode: String, sequence_id: Option<String>, scheduled_at: String) -> Result<outreach::State, String> { blocking!(outreach::create_campaign(name, thread_ids, template_id, variant_mode, sequence_id, scheduled_at)) }
+#[tauri::command]
 async fn outreach_save(state: outreach::State) -> Result<outreach::State, String> { blocking!(outreach::save(state)) }
 #[tauri::command]
 async fn outreach_send(thread_id: String, subject: String, body: String, step: u32, template_id: Option<String>, variant_id: Option<String>) -> Result<outreach::Thread, String> { blocking!(outreach::send(thread_id, subject, body, step, template_id, variant_id)) }
@@ -367,6 +369,15 @@ fn outreach_autodraft_start(app: tauri::AppHandle, job_id: String, limit: Option
   Ok(())
 }
 #[tauri::command]
+fn outreach_campaign_run(app: tauri::AppHandle, job_id: String, campaign_id: String) -> Result<(), String> {
+  let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+  job_flags().lock().map_err(|e| e.to_string())?.insert(job_id.clone(), flag.clone());
+  std::thread::spawn(move || { outreach::campaign_run_job(app, job_id.clone(), campaign_id, flag); let _ = job_flags().lock().map(|mut m| m.remove(&job_id)); });
+  Ok(())
+}
+#[tauri::command]
+async fn outreach_campaign_delete(id: String) -> Result<outreach::State, String> { blocking!(outreach::campaign_delete(id)) }
+#[tauri::command]
 fn job_cancel(job_id: String) -> Result<bool, String> {
   Ok(job_flags().lock().map_err(|e| e.to_string())?.get(&job_id).map(|f| { f.store(true, std::sync::atomic::Ordering::Relaxed); true }).unwrap_or(false))
 }
@@ -412,7 +423,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }
