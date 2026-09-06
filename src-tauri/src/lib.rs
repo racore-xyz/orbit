@@ -2,6 +2,7 @@ mod integrations;
 mod llm;
 mod outreach;
 mod workspace;
+mod quota;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -62,6 +63,14 @@ fn bridge_cmd() -> Result<Command, String> {
   cmd.env("PYTHONIOENCODING", "utf-8");
   cmd.env("PYTHONUTF8", "1");
   cmd.env("AGENT_REACH_LANG", "en");
+  // Rate-limit protection for the bridge's outbound channels (Settings → Rate limits).
+  let lim = quota::limits();
+  cmd.env("ORBIT_EXA_GAP_SHARED", lim.exa_gap_shared_s.to_string());
+  cmd.env("ORBIT_EXA_GAP_KEYED", lim.exa_gap_keyed_s.to_string());
+  cmd.env("ORBIT_JINA_GAP", lim.jina_gap_s.to_string());
+  cmd.env("ORBIT_REDDIT_GAP", lim.reddit_gap_s.to_string());
+  cmd.env("ORBIT_EXA_CALLS_PER_RUN", lim.exa_calls_per_run.to_string());
+  cmd.env("ORBIT_ENRICH_PER_RUN", lim.enrich_per_run.to_string());
   #[cfg(windows)]
   {
     use std::os::windows::process::CommandExt;
@@ -372,6 +381,10 @@ async fn exa_set_key(key: String) -> Result<serde_json::Value, String> { blockin
 #[tauri::command]
 async fn exa_status() -> Result<serde_json::Value, String> { Ok(blocking!(integrations::exa_status())) }
 #[tauri::command]
+async fn quota_status() -> Result<serde_json::Value, String> { Ok(blocking!(quota::status())) }
+#[tauri::command]
+async fn quota_set(limits: quota::Limits) -> Result<quota::Limits, String> { blocking!(quota::set_limits(limits)) }
+#[tauri::command]
 async fn llm_set_rate_limit(provider: String, rpm: u32) -> Result<(), String> { blocking!(llm::set_rate_limit(&provider, rpm)) }
 
 #[tauri::command]
@@ -385,7 +398,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

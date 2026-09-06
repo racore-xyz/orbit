@@ -96,7 +96,14 @@ def parse_exa_text(text):
     return results
 
 
-EXA_MIN_GAP = 1.0 if os.environ.get("ORBIT_EXA_KEYED") else 2.5   # seconds between calls (free shared endpoint is stricter)
+def _envf(k, d):
+    try:
+        return float(os.environ.get(k) or d)
+    except ValueError:
+        return d
+
+
+EXA_MIN_GAP = _envf("ORBIT_EXA_GAP_KEYED", 1.0) if os.environ.get("ORBIT_EXA_KEYED") else _envf("ORBIT_EXA_GAP_SHARED", 2.5)   # seconds between calls
 _exa_last = [0.0]
 EXA_LIMIT_MSG = ("Exa rate limit reached on the free shared endpoint. Add your own free Exa API key under Integrations → Agent Reach "
                  "(dashboard.exa.ai/api-keys) for a much higher limit, or wait a few minutes and retry.")

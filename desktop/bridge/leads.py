@@ -165,7 +165,12 @@ def emit_line(obj):
     sys.stdout.flush()
 
 
-def find_leads(query, target=1000, max_calls=25, angles=None, emit=None):
+def find_leads(query, target=1000, max_calls=None, angles=None, emit=None):
+    if max_calls is None:
+        try:
+            max_calls = int(os.environ.get("ORBIT_EXA_CALLS_PER_RUN") or 25)
+        except ValueError:
+            max_calls = 25
     seen, leads, calls = set(), [], []
     variants = []
     for region in REGIONS:
@@ -217,7 +222,19 @@ def _percent(count, target, calls_done, planned):
 
 
 # ---------------------------------------------------------------- enrichment via Agent Reach web channel (Jina Reader)
+_jina_last = [0.0]
+
+
 def read_page(url, timeout=25):
+    """Jina Reader (Agent Reach web channel), paced by ORBIT_JINA_GAP seconds between reads."""
+    try:
+        gap = float(os.environ.get("ORBIT_JINA_GAP") or 1.0)
+    except ValueError:
+        gap = 1.0
+    wait = gap - (time.time() - _jina_last[0])
+    if wait > 0:
+        time.sleep(wait)
+    _jina_last[0] = time.time()
     req = urllib.request.Request("https://r.jina.ai/" + url, headers={"User-Agent": "orbit-growth-os/0.1", "Accept": "text/plain"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "ignore")
@@ -340,6 +357,10 @@ def enrich_photo(lead):
 
 
 def enrich(leads, limit=50, emit=None):
+    try:
+        limit = min(limit, int(os.environ.get("ORBIT_ENRICH_PER_RUN") or limit))
+    except ValueError:
+        pass
     out, log = [], []
     todo = min(limit, len(leads))
     if emit:

@@ -124,7 +124,9 @@ pub fn send(thread_id: String, subject: String, body: String, step: u32, templat
   let idx = st.threads.iter().position(|t| t.id == thread_id).ok_or("thread not found")?;
   let to = st.threads[idx].email.clone();
   if to.trim().is_empty() { return Err("This contact has no email address. Enrich the lead first.".into()); }
+  crate::quota::gate_send()?;
   let res = integrations::smtp_send(to.clone(), subject.clone(), body.clone())?;
+  crate::quota::record_send();
   let now = integrations::now_iso();
   let t = &mut st.threads[idx];
   t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "out".into(), subject, body, at: now.clone(), provider: Some(via), step, external_id: res.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()), template_id, variant_id });

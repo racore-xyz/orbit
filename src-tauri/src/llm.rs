@@ -103,6 +103,7 @@ pub fn complete(provider: Option<String>, model: Option<String>, system: String,
   let mut attempt = 0u32;
   let text = loop {
     throttle(&provider);
+    crate::quota::record_llm();
     match complete_once(&c, &provider, info, &model, &key, &system, &user, max_tokens) {
       Ok(t) => break t,
       Err(e) if attempt < 3 && (e.contains("429") || e.to_lowercase().contains("rate limit") || e.to_lowercase().contains("overloaded") || e.contains("503")) => {

@@ -50,3 +50,6 @@ Not bundled (no package-manager distribution): GitHub CLI `gh`, `deno`, `uvx`, `
 
 ## Exa quota
 Agent Reach's web search runs on Exa's MCP. Without a key it uses the free shared endpoint at `https://mcp.exa.ai/mcp`, whose rate limit is unpublished and low; it answers HTTP 429 after a burst of searches. Integrations → Agent Reach → "Exa API key" stores a personal key (free tier at https://dashboard.exa.ai/api-keys) in the credential store and writes `%APPDATA%\orbit\mcporter.json` with `?exaApiKey=…`, which the bridge prefers over the bundled config. The bridge also paces Exa calls (2.5 s apart on the shared endpoint, 1 s with a key), retries once after 20 s on 429, stops a run early after three near-empty queries, and caps a run at 25 calls.
+
+## Rate-limit protection (all channels)
+Settings → Rate limits stores `%APPDATA%\orbit\quota.json`: emails per day (default 100) and seconds between emails (20) enforced in `outreach::send` through `quota::gate_send`; Exa gap (2.5 s shared / 1 s keyed), Jina Reader gap (1 s), Arctic Shift gap (1.2 s), Exa calls per run (25) and profiles per enrichment run (50) passed to the bridge as `ORBIT_*` environment variables; LLM requests per minute per provider in `llm.rs` (`throttle`) with 429/5xx backoff. Today's usage counters (emails sent, LLM calls) reset at midnight.

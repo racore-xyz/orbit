@@ -17,6 +17,7 @@ Usage: main.py reddit-stream <params.json>
            include_comments: true, max_posts_comments: 8}
 """
 import json
+import os
 import re
 import sys
 import time
@@ -42,7 +43,11 @@ def _get(path, params, retries=5):
     url = f"{BASE}/{path}?" + urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "", [])}, doseq=True)
     last_err = "unknown"
     for attempt in range(retries):
-        gap = 1.2 - (time.time() - _last[0])
+        try:
+            base_gap = float(os.environ.get("ORBIT_REDDIT_GAP") or 1.2)
+        except ValueError:
+            base_gap = 1.2
+        gap = base_gap - (time.time() - _last[0])
         if gap > 0:
             time.sleep(gap)
         _last[0] = time.time()

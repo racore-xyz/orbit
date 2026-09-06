@@ -1069,7 +1069,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
             <Btn variant="secondary" size="sm" icon={RefreshCw} onClick={sync} disabled={!!busy}>{busy === 'sync' ? t('Checking inbox…', 'جاري فحص الصندوق…') : t('Sync replies', 'مزامنة الردود')}</Btn>
             <Btn size="sm" icon={RefreshCw} onClick={() => { setPanel(panel === 'followups' ? 'none' : 'followups'); void prepareQueue(); }} disabled={!!busy || !counts.due}>{t(`Review due follow-ups (${counts.due})`, `مراجعة المتابعات المستحقة (${counts.due})`)}</Btn>
             <Btn variant="secondary" size="sm" icon={Sparkles} onClick={() => setPanel(panel === 'style' ? 'none' : 'style')}>{t('My writing style', 'أسلوبي في الكتابة')}</Btn>
-            {counts.drafts > 0 && st?.templates.length ? <Btn variant="ai" size="sm" icon={FileText} onClick={() => { if (window.confirm(t(`Auto-fill the template and send the first email to ${counts.drafts} draft contacts now?`, `ملء القالب وإرسال الرسالة الأولى إلى ${counts.drafts} جهة اتصال الآن؟`))) void fillAndSendDrafts(); }} disabled={!!busy}>{busy === 'bulk' ? t('Sending…', 'جاري الإرسال…') : t(`Fill & send ${counts.drafts} drafts`, `ملء وإرسال ${counts.drafts} مسودة`)}</Btn> : null}
+            {counts.drafts > 0 && st?.templates.length ? <Btn variant="ai" size="sm" icon={FileText} onClick={() => { if (window.confirm(t(`Auto-fill the template and send the first email to ${counts.drafts} draft contacts now? Sends are spaced and capped by your rate limits (Settings).`, `ملء القالب وإرسال الرسالة الأولى إلى ${counts.drafts} جهة اتصال الآن؟ الإرسال متباعد ومحدود حسب حدود الاستخدام (الإعدادات).`))) void fillAndSendDrafts(); }} disabled={!!busy}>{busy === 'bulk' ? t('Sending…', 'جاري الإرسال…') : t(`Fill & send ${counts.drafts} drafts`, `ملء وإرسال ${counts.drafts} مسودة`)}</Btn> : null}
           </>
         }
       />
@@ -1469,6 +1469,7 @@ function WorkspacePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: 
           </div>
         </Card>
       </div>
+      <QuotaCard t={t} />
       <Card>
         <CardHead title={t('Your data', 'بياناتك')} sub={`${t('Stored in', 'محفوظة في')} ${ws.storage.dir} · ${t('secrets in Windows Credential Manager', 'الأسرار في Windows Credential Manager')}`} />
         {datasets.map((d) => (
@@ -1812,5 +1813,45 @@ function SocialPage({ t, openRunId, onOpened }: { t: T; openRunId?: string | nul
         </>
       )}
     </>
+  );
+}
+
+type QuotaLimits = { smtp_per_day: number; smtp_min_gap_s: number; exa_gap_shared_s: number; exa_gap_keyed_s: number; jina_gap_s: number; reddit_gap_s: number; exa_calls_per_run: number; enrich_per_run: number };
+type QuotaStatus = { limits: QuotaLimits; usage: { day: string; smtp_sent: number; llm_calls: number; last_send_at?: string | null }; defaults: QuotaLimits };
+
+/** Settings → Rate limits: one place for every outbound channel's protection, with today's usage. */
+function QuotaCard({ t }: { t: T }) {
+  const [q, setQ] = useState<QuotaStatus | null>(null);
+  const [l, setL] = useState<QuotaLimits | null>(null);
+  const [msg, setMsg] = useState('');
+  const load = async () => { try { const s = await invoke<QuotaStatus>('quota_status'); setQ(s); setL(s.limits); } catch (e) { setMsg(String(e)); } };
+  /* oxlint-disable react/react-compiler -- load once */
+  useEffect(() => { void load(); }, []);
+  /* oxlint-enable react/react-compiler */
+  if (!q || !l) return null;
+  const f = (k: keyof QuotaLimits, label: string, hint: string, step = 1) => (
+    <label className="o-field" key={k} title={hint}>{label}<input type="number" min={0} step={step} value={l[k]} onChange={(e) => setL({ ...l, [k]: Number(e.target.value) })} /><small className="o-muted" style={{ fontWeight: 400 }}>{hint}</small></label>
+  );
+  return (
+    <Card>
+      <CardHead title={t('Rate limits & quotas', 'حدود الاستخدام والحصص')} sub={t('Applied to every send, search and page read the app makes. Today’s usage resets at midnight.', 'تُطبَّق على كل إرسال وبحث وقراءة صفحة يقوم بها التطبيق. استخدام اليوم يُصفَّر عند منتصف الليل.')}
+        action={<div className="o-flex"><Chip tone={q.usage.smtp_sent >= l.smtp_per_day ? 'coral' : 'green'}>{t('Emails today', 'رسائل اليوم')} {q.usage.smtp_sent}/{l.smtp_per_day}</Chip><Chip tone="neutral">{t('LLM calls today', 'استدعاءات النماذج اليوم')} {q.usage.llm_calls}</Chip></div>} />
+      {msg && <div className="o-result error">{msg}</div>}
+      <div className="o-form-grid" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+        {f('smtp_per_day', t('Emails per day', 'رسائل في اليوم'), t('Gmail app passwords allow ~500/day; 100 keeps your sender reputation safe.', 'كلمات مرور Gmail تسمح بنحو 500/يوم؛ 100 يحافظ على سمعة المرسل.'))}
+        {f('smtp_min_gap_s', t('Seconds between emails', 'ثوانٍ بين الرسائل'), t('Bulk sends and follow-ups are spaced by this.', 'الإرسال الجماعي والمتابعات تتباعد بهذا القدر.'))}
+        {f('exa_calls_per_run', t('Exa calls per research run', 'استعلامات Exa لكل عملية'), t('Each call returns up to 100 results.', 'كل استعلام يعيد حتى 100 نتيجة.'))}
+        {f('enrich_per_run', t('Profiles per enrichment run', 'ملفات لكل عملية إثراء'), t('Company site + LinkedIn reads via Jina Reader.', 'قراءة موقع الشركة وLinkedIn عبر Jina Reader.'))}
+        {f('exa_gap_shared_s', t('Exa gap, shared endpoint (s)', 'فاصل Exa، النقطة المشتركة (ث)'), t('Without your own Exa key.', 'بدون مفتاح Exa خاص.'), 0.5)}
+        {f('exa_gap_keyed_s', t('Exa gap, your key (s)', 'فاصل Exa، مفتاحك (ث)'), t('With your Exa key.', 'مع مفتاح Exa الخاص.'), 0.5)}
+        {f('jina_gap_s', t('Jina Reader gap (s)', 'فاصل Jina Reader (ث)'), t('Between page reads during enrichment.', 'بين قراءات الصفحات أثناء الإثراء.'), 0.5)}
+        {f('reddit_gap_s', t('Arctic Shift gap (s)', 'فاصل Arctic Shift (ث)'), t('Between Reddit archive requests.', 'بين طلبات أرشيف Reddit.'), 0.1)}
+      </div>
+      <div className="o-flex o-mt">
+        <Btn size="sm" onClick={async () => { try { await invoke('quota_set', { limits: l }); setMsg(''); await load(); } catch (e) { setMsg(String(e)); } }}>{t('Save limits', 'حفظ الحدود')}</Btn>
+        <Btn size="sm" variant="ghost" onClick={() => setL(q.defaults)}>{t('Reset to defaults', 'إعادة الافتراضيات')}</Btn>
+        <span className="o-note" style={{ margin: 0 }}>{t('LLM requests per minute are set per provider under AI Agents.', 'طلبات النماذج في الدقيقة تُضبط لكل مزوّد تحت وكلاء الذكاء الاصطناعي.')}</span>
+      </div>
+    </Card>
   );
 }
