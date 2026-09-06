@@ -325,7 +325,11 @@ async fn outreach_followup_action(thread_id: String, action: String, days: Optio
 #[tauri::command]
 fn outreach_placeholders() -> Vec<(String, String)> { outreach::PLACEHOLDERS.iter().map(|(k, d)| (k.to_string(), d.to_string())).collect() }
 #[tauri::command]
-async fn outreach_sync() -> Result<serde_json::Value, String> { blocking!(outreach::sync_replies()) }
+async fn outreach_sync(app: tauri::AppHandle) -> Result<serde_json::Value, String> { blocking!(outreach::sync_replies(Some(app))) }
+#[tauri::command]
+async fn outreach_draft_reply(thread_id: String) -> Result<serde_json::Value, String> { blocking!(outreach::draft_reply(thread_id)) }
+#[tauri::command]
+async fn outreach_send_reply(thread_id: String, subject: String, body: String) -> Result<outreach::Thread, String> { blocking!(outreach::send_reply(thread_id, subject, body)) }
 #[tauri::command]
 async fn outreach_draft(thread_id: String, step: u32, instructions: Option<String>) -> Result<serde_json::Value, String> { blocking!(outreach::draft(thread_id, step, instructions)) }
 #[tauri::command]
@@ -423,7 +427,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

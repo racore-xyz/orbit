@@ -42,6 +42,8 @@ pub struct Thread {
   pub unread: bool,
   #[serde(default)]
   pub pending_draft: Option<PendingDraft>,
+  #[serde(default)]
+  pub pending_reply: Option<PendingDraft>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -60,7 +62,7 @@ pub struct Learned { pub draft: String, pub final_text: String, pub at: String }
 pub struct Style { pub samples: Vec<String>, pub guide: String, pub signature: String, pub learned: Vec<Learned>, pub language: String }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
-pub struct Settings { pub send_via: String, pub auto_followup: bool, pub default_max_followups: u32, pub default_interval_days: u32, #[serde(default)] pub default_template_id: Option<String>, #[serde(default)] pub variant_mode: String }
+pub struct Settings { pub send_via: String, pub auto_followup: bool, pub default_max_followups: u32, pub default_interval_days: u32, #[serde(default)] pub default_template_id: Option<String>, #[serde(default)] pub variant_mode: String, #[serde(default)] pub auto_reply: bool }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Variant { pub id: String, pub label: String, pub subject: String, pub body: String, #[serde(default)] pub angle: String }
@@ -137,12 +139,14 @@ pub fn send(thread_id: String, subject: String, body: String, step: u32, templat
   if to.trim().is_empty() { return Err("This contact has no email address. Enrich the lead first.".into()); }
   crate::quota::gate_send()?;
   let mb = integrations::next_mailbox()?;
-  let res = integrations::send_via_mailbox(&mb.id, to.clone(), subject.clone(), body.clone())?;
+  let n = st.threads[idx].messages.len() + 1;
+  let mid = format!("<orbit-{thread_id}-{n}@orbit.mail>");
+  let res = integrations::send_via_mailbox(&mb.id, to.clone(), subject.clone(), body.clone(), Some(mid.clone()))?;
   crate::quota::record_send();
   let now = integrations::now_iso();
   let via = res.get("mailbox").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or(via);
   let t = &mut st.threads[idx];
-  t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "out".into(), subject, body, at: now.clone(), provider: Some(via), step, external_id: res.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()), template_id, variant_id });
+  t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "out".into(), subject, body, at: now.clone(), provider: Some(via), step, external_id: Some(res.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()).map(|c| format!("{c}|{mid}")).unwrap_or(mid)), template_id, variant_id });
   if step > 1 { t.followup_count = step - 1; }
   t.last_activity = now.clone();
   t.unread = false;
@@ -155,36 +159,116 @@ pub fn send(thread_id: String, subject: String, body: String, step: u32, templat
 }
 
 /// Pull replies from the mailbox (Gmail API when connected, IMAP for SMTP accounts) and mark threads replied.
-pub fn sync_replies() -> Result<serde_json::Value, String> {
+pub fn sync_replies(app: Option<tauri::AppHandle>) -> Result<serde_json::Value, String> {
   let mut st = load();
-  let mut found = 0;
-  let mut log = Vec::new();
   let cfg = integrations::load();
-  let has_inbox = cfg.imap.host.is_some() || cfg.mailboxes.iter().any(|m| m.imap_host.is_some());
-  if !has_inbox { return Err("No inbox to check: add a Gmail or SMTP+IMAP mailbox under Integrations → Mailboxes.".into()); }
-  for t in st.threads.iter_mut() {
-    if t.status == "closed" || t.messages.iter().all(|m| m.direction != "out") { continue; }
-    let since = t.messages.iter().filter(|m| m.direction == "out").map(|m| m.at.clone()).min().unwrap_or_default();
-    let known: Vec<String> = t.messages.iter().filter_map(|m| m.external_id.clone()).collect();
-    let replies = integrations::imap_replies_all(&t.email, &since);
-    match replies {
-      Ok(list) => {
-        for r in list {
-          let ext = r.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-          if !ext.is_empty() && known.contains(&ext) { continue; }
-          t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "in".into(), subject: r.get("subject").and_then(|v| v.as_str()).unwrap_or("").into(), body: r.get("body").and_then(|v| v.as_str()).unwrap_or("").into(), at: r.get("at").and_then(|v| v.as_str()).unwrap_or("").into(), provider: None, step: 0, external_id: Some(ext), template_id: None, variant_id: None });
-          t.status = "replied".into();
-          t.next_followup_at = None;
-          t.unread = true;
-          t.last_activity = integrations::now_iso();
-          found += 1;
+  let has_inbox = cfg.mailboxes.iter().any(|m| m.imap_host.is_some());
+  if !has_inbox { return Err("No inbox to check: add a Gmail or SMTP+IMAP mailbox under Integrations \u{2192} Mailboxes.".into()); }
+  // earliest outbound across all threads bounds the IMAP search window
+  let since = st.threads.iter().flat_map(|t| t.messages.iter().filter(|m| m.direction == "out").map(|m| m.at.clone())).min().unwrap_or_else(|| integrations::now_iso());
+  let inbox = integrations::fetch_inbox_since(&since)?;
+  let mut found = 0;
+  let mut newly: Vec<usize> = Vec::new();
+  for msg in &inbox {
+    let from_email = msg.get("from_email").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let from_domain = msg.get("from_domain").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let refs = msg.get("refs").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let subj = msg.get("subject").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+    let msg_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // find the best thread: 1) our Message-ID threaded in refs, 2) exact from address,
+    // 3) same domain AND the reply subject contains our first subject core.
+    let idx = st.threads.iter().position(|t| refs.contains(&format!("orbit-{}-", t.id)))
+      .or_else(|| st.threads.iter().position(|t| !t.email.is_empty() && t.email.to_lowercase() == from_email))
+      .or_else(|| st.threads.iter().position(|t| {
+        if from_domain.is_empty() || t.email.split('@').nth(1).map(|d| d.to_lowercase()) != Some(from_domain.clone()) { return false; }
+        let core = t.messages.iter().find(|m| m.direction == "out").map(|m| m.subject.trim_start_matches("Re: ").to_lowercase()).unwrap_or_default();
+        !core.is_empty() && subj.contains(&core)
+      }));
+    let Some(idx) = idx else { continue };
+    let t = &mut st.threads[idx];
+    if t.messages.iter().any(|m| m.external_id.as_deref().map(|e| e.contains(&msg_id)).unwrap_or(false)) { continue; }
+    // skip if this is one of our own outbound message-ids echoed back
+    if msg_id.contains("orbit-") { continue; }
+    t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "in".into(),
+      subject: msg.get("subject").and_then(|v| v.as_str()).unwrap_or("").into(),
+      body: msg.get("body").and_then(|v| v.as_str()).unwrap_or("").into(),
+      at: msg.get("at").and_then(|v| v.as_str()).unwrap_or("").into(), provider: None, step: 0,
+      external_id: Some(msg_id), template_id: None, variant_id: None });
+    if t.status != "replied" { newly.push(idx); }
+    t.status = "replied".into();
+    t.next_followup_at = None;
+    t.unread = true;
+    t.last_activity = integrations::now_iso();
+    found += 1;
+  }
+  save(st.clone())?;
+
+  // Negotiation on reply: draft an AI answer for every newly-replied thread.
+  let auto = st.settings.auto_reply;
+  let mut auto_sent = 0;
+  let mut drafted = 0;
+  for idx in &newly {
+    let tid = st.threads[*idx].id.clone();
+    match draft_reply(tid.clone()) {
+      Ok(d) => {
+        let subject = d["subject"].as_str().unwrap_or("").to_string();
+        let body = d["body"].as_str().unwrap_or("").to_string();
+        if auto && !subject.is_empty() && !body.is_empty() {
+          if send_reply(tid.clone(), subject, body).is_ok() { auto_sent += 1; }
+        } else {
+          let mut s2 = load();
+          if let Some(t) = s2.threads.iter_mut().find(|t| t.id == tid) {
+            t.pending_reply = Some(PendingDraft { subject, body, step: 0, at: integrations::now_iso(), source: "negotiation".into() });
+          }
+          let _ = save(s2);
+          drafted += 1;
         }
       }
-      Err(e) => log.push(format!("{}: {e}", t.email)),
+      Err(_) => {}
     }
   }
+  if found > 0 {
+    let title = format!("{found} new repl{}", if found == 1 { "y" } else { "ies" });
+    let text = if auto_sent > 0 { format!("{auto_sent} AI negotiation repl{} sent automatically.", if auto_sent == 1 { "y" } else { "ies" }) }
+      else if drafted > 0 { format!("{drafted} AI negotiation draft{} ready for your approval in Outreach.", if drafted == 1 { "" } else { "s" }) }
+      else { "Open Outreach to read and answer them.".into() };
+    let _ = crate::workspace::notify(app.as_ref(), "reply", &title, &text, Some("outreach"));
+    let _ = crate::workspace::log("outreach".into(), format!("{found} replies synced ({auto_sent} auto-answered, {drafted} drafted)"));
+  }
+  Ok(serde_json::json!({ "found": found, "auto_sent": auto_sent, "drafted": drafted, "errors": [] }))
+}
+
+/// Draft a negotiation reply to the latest inbound message, in the user's style, using full context.
+pub fn draft_reply(thread_id: String) -> Result<serde_json::Value, String> {
+  let st = load();
+  let t = st.threads.iter().find(|t| t.id == thread_id).ok_or("thread not found")?;
+  let last_in = t.messages.iter().rev().find(|m| m.direction == "in").ok_or("no reply to answer")?;
+  let ws = crate::workspace::load().profile;
+  let history: Vec<String> = t.messages.iter().map(|m| format!("[{} {}] {}\n{}", if m.direction == "out" { "YOU".to_string() } else { t.name.to_uppercase() }, m.at, m.subject, m.body)).collect();
+  let first_subject = t.messages.iter().find(|m| m.direction == "out").map(|m| m.subject.clone()).unwrap_or_default();
+  let reply_subject = if first_subject.to_lowercase().starts_with("re:") { first_subject.clone() } else { format!("Re: {first_subject}") };
+  let system = format!(
+    "You are {name} from {company} ({role}), replying by email to a prospect who just responded. You are negotiating in good faith to move toward a call or a deal.\nWhat you offer: {offer}\nGoal: {goals}\nWrite in the user's own voice (match the earlier YOU messages). Be warm, specific and concise. Directly answer their questions and objections, address pricing/timing if they raised it, and end with one clear next step (a proposed time, a question, or a light ask). Plain text only, no markdown. Language: {lang}. Output exactly:\nSubject: {subject}\n\n<body>",
+    name = ws.name, company = ws.company, role = ws.role, offer = ws.offer, goals = ws.goals, lang = if ws.language == "ar" { "Arabic" } else { "English" }, subject = reply_subject,
+  );
+  let user = format!("CONVERSATION SO FAR:\n{}\n\nTHEIR LATEST MESSAGE (answer this):\n{}\n\nWrite my reply.", history.join("\n\n"), last_in.body);
+  let text = crate::llm::complete(None, None, crate::outreach::style_prompt(&st) + "\n\n" + &system, user, 900)?;
+  let (subject, body) = split_subject(&text);
+  let subject = if subject.is_empty() { reply_subject } else { subject };
+  Ok(serde_json::json!({ "subject": subject, "body": body }))
+}
+
+/// Send a negotiation reply on a thread (records it, clears the pending reply, keeps the thread open).
+pub fn send_reply(thread_id: String, subject: String, body: String) -> Result<Thread, String> {
+  let out = send(thread_id.clone(), subject, body, 0, None, None)?;
+  let mut st = load();
+  if let Some(t) = st.threads.iter_mut().find(|t| t.id == thread_id) {
+    t.pending_reply = None;
+    t.status = "sent".into(); // awaiting their next reply
+    t.unread = false;
+  }
   save(st)?;
-  Ok(serde_json::json!({ "found": found, "errors": log }))
+  Ok(out)
 }
 
 /// Threads whose next follow-up is due (status sent, not replied, under the cap).

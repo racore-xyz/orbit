@@ -280,15 +280,16 @@ pub fn next_mailbox() -> Result<Mailbox, String> {
 }
 
 /// Send through a specific mailbox and record its usage (for rotation and caps).
-pub fn send_via_mailbox(mailbox_id: &str, to: String, subject: String, body: String) -> Result<serde_json::Value, String> {
+pub fn send_via_mailbox(mailbox_id: &str, to: String, subject: String, body: String, message_id: Option<String>) -> Result<serde_json::Value, String> {
   use lettre::{message::header::ContentType, Message, Transport};
   let mut cfg = load();
   let day = today();
   let idx = cfg.mailboxes.iter().position(|m| m.id == mailbox_id).ok_or("mailbox not found")?;
   let pw = secret_get(&format!("mailbox-{mailbox_id}-smtp")).ok_or("mailbox password missing")?;
   let (from, m) = { let m = &cfg.mailboxes[idx]; (m.from.clone(), m.clone()) };
-  let msg = Message::builder().from(from.parse().map_err(|e| format!("from: {e}"))?).to(to.parse().map_err(|e| format!("to: {e}"))?)
-    .subject(subject).header(ContentType::TEXT_PLAIN).body(body).map_err(|e| e.to_string())?;
+  let mut mb_builder = Message::builder().from(from.parse().map_err(|e| format!("from: {e}"))?).to(to.parse().map_err(|e| format!("to: {e}"))?).subject(subject);
+  if let Some(mid) = message_id { mb_builder = mb_builder.message_id(Some(mid)); }
+  let msg = mb_builder.header(ContentType::TEXT_PLAIN).body(body).map_err(|e| e.to_string())?;
   let r = mailbox_transport(&m, &pw)?.send(&msg).map_err(|e| format!("SMTP send failed: {e}"))?;
   let mb = &mut cfg.mailboxes[idx];
   if mb.sent_day != day { mb.sent_day = day; mb.sent_today = 0; }
@@ -393,6 +394,69 @@ pub fn imap_replies_from(from_email: &str, since: &str) -> Result<Vec<serde_json
       let mut body = String::new();
       if parsed.subparts.is_empty() { body = parsed.get_body().unwrap_or_default(); } else { for sp in &parsed.subparts { if sp.ctype.mimetype == "text/plain" { body = sp.get_body().unwrap_or_default(); break; } } }
       out.push(serde_json::json!({ "id": format!("imap-{uid}"), "subject": subject, "body": body.chars().take(2000).collect::<String>(), "at": at }));
+    }
+  }
+  let _ = session.logout();
+  Ok(out)
+}
+
+/// One received email, normalized for reply matching (From address + domain, subject, threading refs).
+pub fn fetch_inbox_since(since: &str) -> Result<Vec<serde_json::Value>, String> {
+  let cfg = load();
+  let boxes: Vec<Mailbox> = cfg.mailboxes.iter().filter(|m| m.imap_host.is_some()).cloned().collect();
+  let mut out = Vec::new();
+  let mut errs = Vec::new();
+  for m in &boxes {
+    match fetch_inbox_mailbox(m, since) { Ok(mut v) => out.append(&mut v), Err(e) => errs.push(e) }
+  }
+  if out.is_empty() && !errs.is_empty() { return Err(errs.join("; ")); }
+  Ok(out)
+}
+
+fn header_email(raw: &str) -> String {
+  // "Name <a@b.com>" or "a@b.com" -> "a@b.com"
+  if let Some(start) = raw.find('<') { if let Some(end) = raw[start..].find('>') { return raw[start + 1..start + end].trim().to_lowercase(); } }
+  raw.trim().trim_matches('"').to_lowercase()
+}
+
+fn fetch_inbox_mailbox(m: &Mailbox, since: &str) -> Result<Vec<serde_json::Value>, String> {
+  let host = m.imap_host.clone().ok_or("no imap")?;
+  let pw = secret_get(&format!("mailbox-{}-imap", m.id)).ok_or("imap password missing")?;
+  let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+  let client = imap::connect((host.as_str(), m.imap_port.unwrap_or(993)), host.as_str(), &tls).map_err(|e| format!("IMAP connect ({}): {e}", m.label))?;
+  let mut session = client.login(m.username.clone(), &pw).map_err(|e| format!("IMAP login ({}): {}", m.label, e.0))?;
+  session.select("INBOX").map_err(|e| e.to_string())?;
+  let (y, mo, d) = civil_from_days((crate::outreach::parse_iso(since).unwrap_or(0) / 86400) as i64);
+  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  let query = format!("SINCE {}-{}-{}", d, months[(mo as usize).saturating_sub(1).min(11)], y);
+  let ids = session.search(&query).map_err(|e| format!("IMAP search: {e}"))?;
+  let mut uids: Vec<u32> = ids.into_iter().collect();
+  uids.sort_unstable();
+  let recent: Vec<u32> = uids.into_iter().rev().take(60).collect();
+  let mut out = Vec::new();
+  for uid in recent {
+    let fetch = match session.fetch(uid.to_string(), "(RFC822)") { Ok(f) => f, Err(_) => continue };
+    for msg in fetch.iter() {
+      let Some(raw) = msg.body() else { continue };
+      let Ok(parsed) = mailparse::parse_mail(raw) else { continue };
+      let h = |name: &str| parsed.headers.iter().find(|x| x.get_key().eq_ignore_ascii_case(name)).map(|x| x.get_value()).unwrap_or_default();
+      let from_raw = h("from");
+      let from_email = header_email(&from_raw);
+      let from_domain = from_email.split('@').nth(1).unwrap_or("").to_string();
+      let subject = h("subject");
+      let refs = format!("{} {}", h("in-reply-to"), h("references"));
+      let msg_id = h("message-id");
+      let date = h("date");
+      let at = mailparse::dateparse(&date).ok().map(|s| iso_from_secs(s.max(0) as u64)).unwrap_or_else(now_iso);
+      let mut body = String::new();
+      if parsed.subparts.is_empty() { body = parsed.get_body().unwrap_or_default(); } else { for sp in &parsed.subparts { if sp.ctype.mimetype == "text/plain" { body = sp.get_body().unwrap_or_default(); break; } } }
+      // ignore our own sent copies
+      if from_email == m.from.to_lowercase() { continue; }
+      out.push(serde_json::json!({
+        "id": if msg_id.is_empty() { format!("imap-{}-{}", m.id, uid) } else { msg_id.trim().to_string() },
+        "from_email": from_email, "from_domain": from_domain, "subject": subject,
+        "refs": refs, "body": body.chars().take(4000).collect::<String>(), "at": at, "mailbox": m.label,
+      }));
     }
   }
   let _ = session.logout();
