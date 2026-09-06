@@ -44,6 +44,32 @@ pub struct Config {
   pub webhook: Webhook,
   #[serde(default)]
   pub imap: Imap,
+  #[serde(default)]
+  pub mailboxes: Vec<Mailbox>,
+}
+
+/// One sending account. Campaigns rotate across every enabled mailbox, each capped per day.
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct Mailbox {
+  pub id: String,
+  pub label: String,
+  pub kind: String, // gmail | smtp
+  pub smtp_host: String,
+  pub smtp_port: u16,
+  pub security: String, // starttls | ssl
+  pub username: String,
+  pub from: String,
+  pub imap_host: Option<String>,
+  pub imap_port: Option<u16>,
+  pub enabled: bool,
+  pub daily_cap: u32,
+  pub verified_at: Option<String>,
+  #[serde(default)]
+  pub sent_today: u32,
+  #[serde(default)]
+  pub sent_day: String,
+  #[serde(default)]
+  pub last_send_at: Option<String>,
 }
 
 fn config_path() -> PathBuf {
@@ -52,7 +78,25 @@ fn config_path() -> PathBuf {
 }
 
 pub fn load() -> Config {
-  std::fs::read_to_string(config_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+  let mut cfg: Config = std::fs::read_to_string(config_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+  // One-time migration: turn the old single SMTP account into the first mailbox.
+  if cfg.mailboxes.is_empty() {
+    if let (Some(host), Some(from)) = (cfg.smtp.host.clone(), cfg.smtp.from.clone()) {
+      if let Some(pw) = secret_get("smtp-password") {
+        let id = "primary".to_string();
+        let _ = secret_set(&format!("mailbox-{id}-smtp"), &pw);
+        if let Some(ipw) = secret_get("imap-password") { let _ = secret_set(&format!("mailbox-{id}-imap"), &ipw); }
+        cfg.mailboxes.push(Mailbox {
+          id, label: from.clone(), kind: if host == "smtp.gmail.com" { "gmail".into() } else { "smtp".into() },
+          smtp_host: host, smtp_port: cfg.smtp.port.unwrap_or(587), security: cfg.smtp.security.clone().unwrap_or_else(|| "starttls".into()),
+          username: cfg.smtp.username.clone().unwrap_or_default(), from, imap_host: cfg.imap.host.clone(), imap_port: cfg.imap.port,
+          enabled: true, daily_cap: 100, verified_at: cfg.smtp.verified_at.clone(), sent_today: 0, sent_day: String::new(), last_send_at: None,
+        });
+        let _ = save(&cfg);
+      }
+    }
+  }
+  cfg
 }
 
 fn save(cfg: &Config) -> Result<(), String> {
@@ -133,8 +177,125 @@ pub fn status() -> serde_json::Value {
       "connected": cfg.webhook.url.is_some() && secret_get("webhook-secret").is_some(),
       "url": cfg.webhook.url, "last_status": cfg.webhook.last_status, "last_sent_at": cfg.webhook.last_sent_at,
     },
+    "mailboxes": cfg.mailboxes.iter().map(|m| serde_json::json!({
+      "id": m.id, "label": m.label, "kind": m.kind, "from": m.from, "username": m.username,
+      "smtp_host": m.smtp_host, "smtp_port": m.smtp_port, "security": m.security,
+      "imap": m.imap_host.is_some(), "enabled": m.enabled, "daily_cap": m.daily_cap,
+      "verified_at": m.verified_at, "sent_today": if m.sent_day == today() { m.sent_today } else { 0 },
+    })).collect::<Vec<_>>(),
     "config_path": config_path().to_string_lossy(),
   })
+}
+
+fn today() -> String { now_iso()[..10].to_string() }
+
+// ---------------------------------------------------------------- mailboxes (multiple senders, round-robin)
+fn mailbox_transport(m: &Mailbox, password: &str) -> Result<lettre::SmtpTransport, String> {
+  use lettre::transport::smtp::authentication::Credentials;
+  let builder = if m.security == "ssl" { lettre::SmtpTransport::relay(&m.smtp_host) } else { lettre::SmtpTransport::starttls_relay(&m.smtp_host) }
+    .map_err(|e| format!("SMTP setup: {e}"))?;
+  Ok(builder.port(m.smtp_port).credentials(Credentials::new(m.username.clone(), password.to_string())).timeout(Some(Duration::from_secs(20))).build())
+}
+
+/// Add or update a mailbox. Verifies SMTP (and IMAP if given) before saving. Password optional on update.
+#[allow(clippy::too_many_arguments)]
+pub fn mailbox_add(id: Option<String>, label: String, kind: String, smtp_host: String, smtp_port: u16, security: String, username: String, from: String, imap_host: Option<String>, imap_port: Option<u16>, password: String, daily_cap: u32) -> Result<serde_json::Value, String> {
+  if smtp_host.trim().is_empty() || from.trim().is_empty() || username.trim().is_empty() { return Err("Host, username and From address are required".into()); }
+  let id = id.filter(|x| !x.is_empty()).unwrap_or_else(|| format!("mb-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
+  if !password.trim().is_empty() { secret_set(&format!("mailbox-{id}-smtp"), password.trim())?; }
+  let pw = secret_get(&format!("mailbox-{id}-smtp")).ok_or("Password is required")?;
+  let mut m = Mailbox {
+    id: id.clone(), label: if label.trim().is_empty() { from.trim().into() } else { label.trim().into() }, kind,
+    smtp_host: smtp_host.trim().into(), smtp_port, security, username: username.trim().into(), from: from.trim().into(),
+    imap_host: imap_host.filter(|h| !h.trim().is_empty()), imap_port, enabled: true, daily_cap: daily_cap.max(1),
+    verified_at: None, sent_today: 0, sent_day: today(), last_send_at: None,
+  };
+  mailbox_transport(&m, &pw)?.test_connection().map_err(|e| format!("SMTP connection failed: {e}"))?;
+  if let Some(ihost) = m.imap_host.clone() {
+    if !password.trim().is_empty() { secret_set(&format!("mailbox-{id}-imap"), password.trim())?; }
+    let ipw = secret_get(&format!("mailbox-{id}-imap")).unwrap_or_else(|| pw.clone());
+    if secret_get(&format!("mailbox-{id}-imap")).is_none() { secret_set(&format!("mailbox-{id}-imap"), &ipw)?; }
+    let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+    let client = imap::connect((ihost.as_str(), m.imap_port.unwrap_or(993)), ihost.as_str(), &tls).map_err(|e| format!("IMAP connect: {e}"))?;
+    let mut session = client.login(m.username.clone(), &ipw).map_err(|e| format!("IMAP login: {}", e.0))?;
+    session.select("INBOX").map_err(|e| format!("IMAP INBOX: {e}"))?;
+    let _ = session.logout();
+  }
+  m.verified_at = Some(now_iso());
+  let mut cfg = load();
+  if let Some(existing) = cfg.mailboxes.iter_mut().find(|x| x.id == id) { m.sent_today = existing.sent_today; m.sent_day = existing.sent_day.clone(); *existing = m.clone(); } else { cfg.mailboxes.push(m.clone()); }
+  save(&cfg)?;
+  Ok(serde_json::json!({ "ok": true, "id": id, "verified_at": m.verified_at }))
+}
+
+pub fn mailbox_add_gmail(address: String, app_password: String, daily_cap: u32) -> Result<serde_json::Value, String> {
+  let addr = address.trim().to_string();
+  let id = format!("gmail-{}", addr.replace(['@', '.'], "-"));
+  let pw = app_password.replace(char::is_whitespace, "");
+  mailbox_add(Some(id), format!("Gmail · {addr}"), "gmail".into(), "smtp.gmail.com".into(), 587, "starttls".into(), addr.clone(), addr, Some("imap.gmail.com".into()), Some(993), pw, daily_cap)
+}
+
+pub fn mailbox_remove(id: String) -> Result<(), String> {
+  secret_del(&format!("mailbox-{id}-smtp"));
+  secret_del(&format!("mailbox-{id}-imap"));
+  let mut cfg = load();
+  cfg.mailboxes.retain(|m| m.id != id);
+  save(&cfg)
+}
+
+pub fn mailbox_toggle(id: String, enabled: bool) -> Result<(), String> {
+  let mut cfg = load();
+  if let Some(m) = cfg.mailboxes.iter_mut().find(|m| m.id == id) { m.enabled = enabled; }
+  save(&cfg)
+}
+
+pub fn mailbox_set_cap(id: String, cap: u32) -> Result<(), String> {
+  let mut cfg = load();
+  if let Some(m) = cfg.mailboxes.iter_mut().find(|m| m.id == id) { m.daily_cap = cap.max(1); }
+  save(&cfg)
+}
+
+pub fn mailbox_test(id: String) -> Result<serde_json::Value, String> {
+  let cfg = load();
+  let m = cfg.mailboxes.iter().find(|m| m.id == id).ok_or("mailbox not found")?;
+  let pw = secret_get(&format!("mailbox-{id}-smtp")).ok_or("password missing")?;
+  mailbox_transport(m, &pw)?.test_connection().map_err(|e| format!("SMTP: {e}"))?;
+  Ok(serde_json::json!({ "ok": true }))
+}
+
+/// Pick the next mailbox for a send: enabled, under its daily cap, least-recently used, fewest sent today.
+pub fn next_mailbox() -> Result<Mailbox, String> {
+  let cfg = load();
+  let day = today();
+  let mut avail: Vec<&Mailbox> = cfg.mailboxes.iter().filter(|m| m.enabled && (if m.sent_day == day { m.sent_today } else { 0 }) < m.daily_cap).collect();
+  if avail.is_empty() {
+    if cfg.mailboxes.is_empty() { return Err("No mailbox connected. Add a Gmail or SMTP account under Integrations → Mailboxes.".into()); }
+    return Err("Every mailbox reached its daily cap. Raise the caps under Integrations → Mailboxes, add another account, or continue tomorrow.".into());
+  }
+  avail.sort_by(|a, b| {
+    let (sa, sb) = (if a.sent_day == day { a.sent_today } else { 0 }, if b.sent_day == day { b.sent_today } else { 0 });
+    sa.cmp(&sb).then(a.last_send_at.cmp(&b.last_send_at))
+  });
+  Ok(avail[0].clone())
+}
+
+/// Send through a specific mailbox and record its usage (for rotation and caps).
+pub fn send_via_mailbox(mailbox_id: &str, to: String, subject: String, body: String) -> Result<serde_json::Value, String> {
+  use lettre::{message::header::ContentType, Message, Transport};
+  let mut cfg = load();
+  let day = today();
+  let idx = cfg.mailboxes.iter().position(|m| m.id == mailbox_id).ok_or("mailbox not found")?;
+  let pw = secret_get(&format!("mailbox-{mailbox_id}-smtp")).ok_or("mailbox password missing")?;
+  let (from, m) = { let m = &cfg.mailboxes[idx]; (m.from.clone(), m.clone()) };
+  let msg = Message::builder().from(from.parse().map_err(|e| format!("from: {e}"))?).to(to.parse().map_err(|e| format!("to: {e}"))?)
+    .subject(subject).header(ContentType::TEXT_PLAIN).body(body).map_err(|e| e.to_string())?;
+  let r = mailbox_transport(&m, &pw)?.send(&msg).map_err(|e| format!("SMTP send failed: {e}"))?;
+  let mb = &mut cfg.mailboxes[idx];
+  if mb.sent_day != day { mb.sent_day = day; mb.sent_today = 0; }
+  mb.sent_today += 1;
+  mb.last_send_at = Some(now_iso());
+  save(&cfg)?;
+  Ok(serde_json::json!({ "ok": true, "response": r.code().to_string(), "from": from, "to": to, "mailbox": mailbox_id }))
 }
 
 // ---------------------------------------------------------------- IMAP (reply detection for SMTP accounts)
@@ -158,6 +319,54 @@ pub fn imap_disconnect() -> Result<(), String> {
   let mut cfg = load();
   cfg.imap = Imap::default();
   save(&cfg)
+}
+
+/// Reply search across every mailbox that has IMAP configured.
+pub fn imap_replies_all(from_email: &str, since: &str) -> Result<Vec<serde_json::Value>, String> {
+  let cfg = load();
+  let boxes: Vec<Mailbox> = cfg.mailboxes.iter().filter(|m| m.imap_host.is_some()).cloned().collect();
+  if boxes.is_empty() { return imap_replies_from(from_email, since); }
+  let mut out = Vec::new();
+  let mut last_err = String::new();
+  for m in boxes {
+    match imap_replies_mailbox(&m, from_email, since) { Ok(mut v) => out.append(&mut v), Err(e) => last_err = e }
+  }
+  if out.is_empty() && !last_err.is_empty() { return Err(last_err); }
+  Ok(out)
+}
+
+fn imap_replies_mailbox(m: &Mailbox, from_email: &str, since: &str) -> Result<Vec<serde_json::Value>, String> {
+  let host = m.imap_host.clone().ok_or("no imap")?;
+  let pw = secret_get(&format!("mailbox-{}-imap", m.id)).ok_or("imap password missing")?;
+  let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+  let client = imap::connect((host.as_str(), m.imap_port.unwrap_or(993)), host.as_str(), &tls).map_err(|e| format!("IMAP connect: {e}"))?;
+  let mut session = client.login(m.username.clone(), &pw).map_err(|e| format!("IMAP login: {}", e.0))?;
+  session.select("INBOX").map_err(|e| e.to_string())?;
+  let out = imap_search_session(&mut session, from_email, since);
+  let _ = session.logout();
+  out
+}
+
+fn imap_search_session<T: std::io::Read + std::io::Write>(session: &mut imap::Session<T>, from_email: &str, since: &str) -> Result<Vec<serde_json::Value>, String> {
+  let (y, m, d) = civil_from_days((crate::outreach::parse_iso(since).unwrap_or(0) / 86400) as i64);
+  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  let query = format!("FROM \"{}\" SINCE {}-{}-{}", from_email, d, months[(m as usize).saturating_sub(1).min(11)], y);
+  let ids = session.search(&query).map_err(|e| format!("IMAP search: {e}"))?;
+  let mut out = Vec::new();
+  for uid in ids.iter().take(10) {
+    let fetch = session.fetch(uid.to_string(), "(RFC822)").map_err(|e| e.to_string())?;
+    for msg in fetch.iter() {
+      let Some(raw) = msg.body() else { continue };
+      let parsed = mailparse::parse_mail(raw).map_err(|e| e.to_string())?;
+      let subject = parsed.headers.iter().find(|h| h.get_key().eq_ignore_ascii_case("subject")).map(|h| h.get_value()).unwrap_or_default();
+      let date = parsed.headers.iter().find(|h| h.get_key().eq_ignore_ascii_case("date")).map(|h| h.get_value()).unwrap_or_default();
+      let at = mailparse::dateparse(&date).ok().map(|s| iso_from_secs(s.max(0) as u64)).unwrap_or_else(now_iso);
+      let mut body = String::new();
+      if parsed.subparts.is_empty() { body = parsed.get_body().unwrap_or_default(); } else { for sp in &parsed.subparts { if sp.ctype.mimetype == "text/plain" { body = sp.get_body().unwrap_or_default(); break; } } }
+      out.push(serde_json::json!({ "id": format!("imap-{uid}"), "subject": subject, "body": body.chars().take(2000).collect::<String>(), "at": at }));
+    }
+  }
+  Ok(out)
 }
 
 pub fn imap_replies_from(from_email: &str, since: &str) -> Result<Vec<serde_json::Value>, String> {

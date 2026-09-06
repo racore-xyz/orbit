@@ -125,9 +125,11 @@ pub fn send(thread_id: String, subject: String, body: String, step: u32, templat
   let to = st.threads[idx].email.clone();
   if to.trim().is_empty() { return Err("This contact has no email address. Enrich the lead first.".into()); }
   crate::quota::gate_send()?;
-  let res = integrations::smtp_send(to.clone(), subject.clone(), body.clone())?;
+  let mb = integrations::next_mailbox()?;
+  let res = integrations::send_via_mailbox(&mb.id, to.clone(), subject.clone(), body.clone())?;
   crate::quota::record_send();
   let now = integrations::now_iso();
+  let via = res.get("mailbox").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or(via);
   let t = &mut st.threads[idx];
   t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "out".into(), subject, body, at: now.clone(), provider: Some(via), step, external_id: res.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()), template_id, variant_id });
   if step > 1 { t.followup_count = step - 1; }
@@ -147,12 +149,13 @@ pub fn sync_replies() -> Result<serde_json::Value, String> {
   let mut found = 0;
   let mut log = Vec::new();
   let cfg = integrations::load();
-  if cfg.imap.host.is_none() { return Err("No inbox to check: configure IMAP under Integrations (Gmail preset or SMTP → Inbox).".into()); }
+  let has_inbox = cfg.imap.host.is_some() || cfg.mailboxes.iter().any(|m| m.imap_host.is_some());
+  if !has_inbox { return Err("No inbox to check: add a Gmail or SMTP+IMAP mailbox under Integrations → Mailboxes.".into()); }
   for t in st.threads.iter_mut() {
     if t.status == "closed" || t.messages.iter().all(|m| m.direction != "out") { continue; }
     let since = t.messages.iter().filter(|m| m.direction == "out").map(|m| m.at.clone()).min().unwrap_or_default();
     let known: Vec<String> = t.messages.iter().filter_map(|m| m.external_id.clone()).collect();
-    let replies = integrations::imap_replies_from(&t.email, &since);
+    let replies = integrations::imap_replies_all(&t.email, &since);
     match replies {
       Ok(list) => {
         for r in list {

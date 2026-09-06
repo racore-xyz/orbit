@@ -377,6 +377,20 @@ async fn notifications_mark(ids: Vec<String>, read: bool, clear: Option<bool>) -
 #[tauri::command]
 async fn dashboard_data() -> Result<serde_json::Value, String> { Ok(blocking!(outreach::dashboard())) }
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn mailbox_add(id: Option<String>, label: String, kind: String, smtp_host: String, smtp_port: u16, security: String, username: String, from: String, imap_host: Option<String>, imap_port: Option<u16>, password: String, daily_cap: u32) -> Result<serde_json::Value, String> { blocking!(integrations::mailbox_add(id, label, kind, smtp_host, smtp_port, security, username, from, imap_host, imap_port, password, daily_cap)) }
+#[tauri::command]
+async fn mailbox_add_gmail(address: String, app_password: String, daily_cap: u32) -> Result<serde_json::Value, String> { blocking!(integrations::mailbox_add_gmail(address, app_password, daily_cap)) }
+#[tauri::command]
+async fn mailbox_remove(id: String) -> Result<(), String> { blocking!(integrations::mailbox_remove(id)) }
+#[tauri::command]
+async fn mailbox_toggle(id: String, enabled: bool) -> Result<(), String> { blocking!(integrations::mailbox_toggle(id, enabled)) }
+#[tauri::command]
+async fn mailbox_set_cap(id: String, cap: u32) -> Result<(), String> { blocking!(integrations::mailbox_set_cap(id, cap)) }
+#[tauri::command]
+async fn mailbox_test(id: String) -> Result<serde_json::Value, String> { blocking!(integrations::mailbox_test(id)) }
+
+#[tauri::command]
 async fn exa_set_key(key: String) -> Result<serde_json::Value, String> { blocking!(integrations::exa_set_key(key)) }
 #[tauri::command]
 async fn exa_status() -> Result<serde_json::Value, String> { Ok(blocking!(integrations::exa_status())) }
@@ -398,7 +412,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

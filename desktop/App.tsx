@@ -353,6 +353,7 @@ type IntStatus = {
   smtp: { connected: boolean; host?: string | null; port?: number | null; username?: string | null; from?: string | null; security?: string | null; verified_at?: string | null };
   imap: { connected: boolean; host?: string | null; port?: number | null; username?: string | null; verified_at?: string | null };
   webhook: { connected: boolean; url?: string | null; last_status?: number | null; last_sent_at?: string | null };
+  mailboxes: { id: string; label: string; kind: string; from: string; username: string; smtp_host: string; smtp_port: number; security: string; imap: boolean; enabled: boolean; daily_cap: number; verified_at?: string | null; sent_today: number }[];
   config_path: string;
 };
 
@@ -406,6 +407,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
   return (
     <>
       <PageHead eyebrow={t('Connections', 'الاتصالات')} title={t('Integrations', 'التكاملات')} sub={t('Every connection is real: passwords go to the OS credential store, nothing is sent without your click. Email works over plain SMTP and IMAP, no Gmail API.', 'كل اتصال حقيقي: كلمات المرور في مخزن النظام، ولا يُرسل شيء بدون ضغطتك. البريد يعمل عبر SMTP وIMAP فقط، بدون Gmail API.')} actions={<Btn variant="secondary" size="sm" onClick={() => { void refresh(); void checkReach(); }} disabled={!!busy}>{t('Refresh status', 'تحديث الحالة')}</Btn>} />
+      <Mailboxes t={t} mailboxes={st?.mailboxes || []} reload={refresh} />
       {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
       <div className="o-grid o-grid-2">
         {cards.map((c) => (
@@ -959,6 +961,10 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
   const [signature, setSignature] = useState('');
   const [lang, setLang] = useState('en');
   const [autoTimer, setAutoTimer] = useState<number | null>(null);
+  const [mailboxCount, setMailboxCount] = useState(0);
+  /* oxlint-disable react/react-compiler -- read enabled mailbox count once */
+  useEffect(() => { void invoke<{ mailboxes?: { enabled: boolean }[] }>('integrations_status').then((s) => setMailboxCount((s.mailboxes || []).filter((m) => m.enabled).length)).catch(() => undefined); }, []);
+  /* oxlint-enable react/react-compiler */
 
   const load = async () => { try { const s = await invoke<OState>('outreach_state'); setSt(s); setSamples([...(s.style.samples.length ? s.style.samples : ['', '', '']), '']); setSignature(s.style.signature); setLang(s.style.language); return s; } catch (e) { setMsg({ tone: 'coral', text: String(e) }); return null; } };
   const persist = async (s: OState) => { try { const saved = await invoke<OState>('outreach_save', { state: s }); setSt(saved); return saved; } catch (e) { setMsg({ tone: 'coral', text: String(e) }); return null; } };
@@ -1227,7 +1233,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
                       </>
                     )}
                     {used && <Chip tone="violet">{t('template', 'قالب')} · {used.variant_label}</Chip>}
-                    <Chip tone="neutral">{t('via SMTP', 'عبر SMTP')}</Chip>
+                    <Chip tone="neutral">{t(mailboxCount > 1 ? `rotating ${mailboxCount} mailboxes` : 'via SMTP', mailboxCount > 1 ? `تناوب ${mailboxCount} صناديق` : 'عبر SMTP')}</Chip>
                     {draftRef && body !== draftRef && <Chip tone="green">{t('Your edits will be learned', 'تعديلاتك ستُتعلَّم')}</Chip>}
                   </div>
                   <input className="o-input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={t('Subject', 'الموضوع')} />
@@ -1912,5 +1918,76 @@ function CrmPage({ t, go }: { t: T; go: (i: number) => void }) {
       </Card>
       {sel && <LeadCard t={t} lead={sel} onClose={() => setSel(null)} onOutreach={() => go(TAB.outreach)} />}
     </>
+  );
+}
+
+type MBox = { id: string; label: string; kind: string; from: string; username: string; smtp_host: string; smtp_port: number; security: string; imap: boolean; enabled: boolean; daily_cap: number; verified_at?: string | null; sent_today: number };
+
+/** Multiple sending accounts. Campaigns rotate across every enabled mailbox, each with a daily cap. */
+function Mailboxes({ t, mailboxes, reload }: { t: T; mailboxes: MBox[]; reload: () => Promise<void> }) {
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const [add, setAdd] = useState<'none' | 'gmail' | 'smtp'>('none');
+  const [g, setG] = useState({ address: '', app_password: '', cap: 100 });
+  const [s, setS] = useState({ label: '', smtp_host: '', smtp_port: '587', security: 'starttls', username: '', from: '', password: '', imap_host: '', imap_port: '993', cap: 100 });
+  const act = async (k: string, fn: () => Promise<string>) => { setBusy(k); setMsg(null); try { setMsg({ tone: 'green', text: await fn() }); await reload(); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const enabled = mailboxes.filter((m) => m.enabled).length;
+  const totalCap = mailboxes.filter((m) => m.enabled).reduce((a2, m) => a2 + m.daily_cap, 0);
+  const sentToday = mailboxes.reduce((a2, m) => a2 + m.sent_today, 0);
+  return (
+    <Card>
+      <CardHead title={t('Sending mailboxes', 'صناديق الإرسال')} sub={t('Add several Gmail or SMTP accounts. Outreach and campaigns rotate across every enabled mailbox and respect each one’s daily cap, so volume spreads and no single account gets flagged.', 'أضف عدة حسابات Gmail أو SMTP. التواصل والحملات تتناوب على كل صندوق مُفعّل وتحترم الحد اليومي لكل واحد، فيتوزّع الحجم ولا يُعلَّم أي حساب.')}
+        action={<div className="o-flex"><Chip tone={enabled ? 'green' : 'neutral'}>{enabled}/{mailboxes.length} {t('active', 'نشط')}</Chip><Chip tone="neutral">{sentToday}/{totalCap} {t('today', 'اليوم')}</Chip><Btn size="sm" icon={Mail} onClick={() => setAdd(add === 'gmail' ? 'none' : 'gmail')}>{t('Add Gmail', 'إضافة Gmail')}</Btn><Btn size="sm" variant="secondary" icon={Send} onClick={() => setAdd(add === 'smtp' ? 'none' : 'smtp')}>{t('Add SMTP', 'إضافة SMTP')}</Btn></div>} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
+
+      {add === 'gmail' && (
+        <div className="o-int-form">
+          <GmailTutorial t={t} />
+          <div className="o-form-grid">
+            <label className="o-field">{t('Gmail address', 'عنوان Gmail')}<input value={g.address} onChange={(e) => setG({ ...g, address: e.target.value })} placeholder="you@gmail.com" /></label>
+            <label className="o-field">{t('App password', 'كلمة مرور التطبيق')}<input type="password" value={g.app_password} onChange={(e) => setG({ ...g, app_password: e.target.value })} placeholder="xxxx xxxx xxxx xxxx" /></label>
+            <label className="o-field">{t('Daily cap', 'الحد اليومي')}<input type="number" min={1} max={500} value={g.cap} onChange={(e) => setG({ ...g, cap: Number(e.target.value) || 100 })} /></label>
+          </div>
+          <div className="o-flex o-mt"><Btn size="sm" disabled={!!busy || !g.address || !g.app_password} onClick={() => act('add-gmail', async () => { await invoke('mailbox_add_gmail', { address: g.address, appPassword: g.app_password, dailyCap: g.cap }); setG({ address: '', app_password: '', cap: 100 }); setAdd('none'); return t(`Gmail mailbox added and verified.`, `تمت إضافة صندوق Gmail والتحقق منه.`); })}>{busy === 'add-gmail' ? t('Verifying…', 'جاري التحقق…') : t('Add & verify', 'إضافة وتحقق')}</Btn></div>
+        </div>
+      )}
+      {add === 'smtp' && (
+        <div className="o-int-form">
+          <div className="o-form-grid">
+            <label className="o-field">{t('Label', 'التسمية')}<input value={s.label} onChange={(e) => setS({ ...s, label: e.target.value })} placeholder={t('Team inbox', 'صندوق الفريق')} /></label>
+            <label className="o-field">{t('From address', 'عنوان المرسل')}<input value={s.from} onChange={(e) => setS({ ...s, from: e.target.value })} placeholder="you@company.com" /></label>
+            <label className="o-field">SMTP host<input value={s.smtp_host} onChange={(e) => setS({ ...s, smtp_host: e.target.value })} placeholder="smtp.company.com" /></label>
+            <label className="o-field">{t('Port', 'المنفذ')}<input value={s.smtp_port} onChange={(e) => setS({ ...s, smtp_port: e.target.value })} /></label>
+            <label className="o-field">{t('Username', 'اسم المستخدم')}<input value={s.username} onChange={(e) => setS({ ...s, username: e.target.value })} /></label>
+            <label className="o-field">{t('Password', 'كلمة المرور')}<input type="password" value={s.password} onChange={(e) => setS({ ...s, password: e.target.value })} /></label>
+            <label className="o-field">{t('Security', 'الأمان')}<select value={s.security} onChange={(e) => setS({ ...s, security: e.target.value })}><option value="starttls">STARTTLS (587)</option><option value="ssl">SSL/TLS (465)</option></select></label>
+            <label className="o-field">{t('Daily cap', 'الحد اليومي')}<input type="number" min={1} value={s.cap} onChange={(e) => setS({ ...s, cap: Number(e.target.value) || 100 })} /></label>
+            <label className="o-field">IMAP host <small className="o-muted">{t('(optional, for replies)', '(اختياري، للردود)')}</small><input value={s.imap_host} onChange={(e) => setS({ ...s, imap_host: e.target.value })} placeholder="imap.company.com" /></label>
+            <label className="o-field">IMAP {t('port', 'منفذ')}<input value={s.imap_port} onChange={(e) => setS({ ...s, imap_port: e.target.value })} /></label>
+          </div>
+          <div className="o-flex o-mt"><Btn size="sm" disabled={!!busy || !s.smtp_host || !s.from || !s.username || !s.password} onClick={() => act('add-smtp', async () => { await invoke('mailbox_add', { id: null, label: s.label, kind: 'smtp', smtpHost: s.smtp_host, smtpPort: Number(s.smtp_port) || 587, security: s.security, username: s.username, from: s.from, imapHost: s.imap_host || null, imapPort: Number(s.imap_port) || 993, password: s.password, dailyCap: s.cap }); setS({ ...s, password: '' }); setAdd('none'); return t('SMTP mailbox added and verified.', 'تمت إضافة صندوق SMTP والتحقق منه.'); })}>{busy === 'add-smtp' ? t('Verifying…', 'جاري التحقق…') : t('Add & verify', 'إضافة وتحقق')}</Btn></div>
+        </div>
+      )}
+
+      {mailboxes.length ? (
+        <div className="o-mt">
+          {mailboxes.map((m) => (
+            <div key={m.id} className="o-row">
+              <IconTile icon={m.kind === 'gmail' ? Mail : Send} tone={m.enabled ? 'green' : 'neutral'} />
+              <div>
+                <b>{m.label} {m.imap ? <Chip tone="sky">IMAP</Chip> : null}{!m.verified_at ? <Chip tone="coral">{t('unverified', 'غير مُتحقق')}</Chip> : null}</b>
+                <small>{m.from} · {m.smtp_host}:{m.smtp_port} · {t('sent today', 'أُرسل اليوم')} {m.sent_today}/{m.daily_cap}</small>
+              </div>
+              <div className="o-flex">
+                <label className="o-flex" style={{ fontSize: 11 }}>{t('cap', 'الحد')} <input className="o-input" style={{ height: 28, width: 60 }} type="number" min={1} defaultValue={m.daily_cap} onBlur={(e) => { const v = Number(e.target.value) || 0; if (v && v !== m.daily_cap) void act('cap', async () => { await invoke('mailbox_set_cap', { id: m.id, cap: v }); return t('Cap updated', 'تم تحديث الحد'); }); }} /></label>
+                <Btn size="sm" variant="ghost" disabled={!!busy} onClick={() => act('test-' + m.id, async () => { await invoke('mailbox_test', { id: m.id }); return t(`${m.label}: SMTP OK`, `${m.label}: SMTP سليم`); })}>{busy === 'test-' + m.id ? '…' : t('Test', 'اختبار')}</Btn>
+                <Switch on={m.enabled} onChange={(v) => void act('toggle', async () => { await invoke('mailbox_toggle', { id: m.id, enabled: v }); return v ? t(`${m.label} enabled`, `${m.label} مُفعّل`) : t(`${m.label} paused`, `${m.label} متوقّف`); })} label="Enabled" />
+                <button className="o-more" aria-label="Remove" onClick={() => act('rm', async () => { await invoke('mailbox_remove', { id: m.id }); return t('Mailbox removed', 'تمت إزالة الصندوق'); })}><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : <EmptyState icon={Mail} title={t('No mailboxes yet', 'لا توجد صناديق بعد')} text={t('Add a Gmail (app password) or SMTP account to send. Add several to spread the volume.', 'أضف حساب Gmail (كلمة مرور تطبيق) أو SMTP للإرسال. أضف عدة حسابات لتوزيع الحجم.')} />}
+    </Card>
   );
 }
