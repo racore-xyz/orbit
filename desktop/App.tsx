@@ -141,6 +141,8 @@ export default function DesktopApp() {
       onNotificationClick={(n) => { if (n.link === 'outreach') setTab(TAB.outreach); else if (n.link === 'history') setTab(TAB.history); }}
       onNotificationsClear={() => { void invoke('notifications_mark', { ids: [], read: true, clear: true }).then(() => reloadWs()); }}
       jobs={job ? <div className={`o-job${job.done ? ' done' : ''}`} title={job.label}><span className={`o-spinner${job.done ? ' done' : ''}`} /><span className="o-job-label">{job.label}</span><b>{job.percent}%</b>{!job.done && <button onClick={() => void invoke('job_cancel', { jobId: job.id })} aria-label="Cancel">✕</button>}</div> : null}
+      mode={ws?.mode || 'startup'}
+      onModeChange={(m) => { if (!ws) return; setTab(0); void invoke('workspace_save', { workspace: { ...ws.workspace, mode: m } }).then(() => reloadWs()); }}
     >
       {!jobsMode && (<>
       {tab === TAB.dashboard && <Dashboard t={t} go={setTab} ws={ws} onAutodraft={startAutodraft} jobRunning={!!job && !job.done} />}

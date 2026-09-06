@@ -1,6 +1,6 @@
 'use client';
-import { useState, type ReactNode } from 'react';
-import { Bell, ChevronDown, ChevronRight, Menu, Moon, MoreHorizontal, Search, Sparkles, Sun } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Bell, Briefcase, Check, ChevronDown, ChevronRight, Menu, Moon, MoreHorizontal, Search, Sparkles, Sun } from 'lucide-react';
 import { AppIcon, Brand, Btn, type Icon } from './primitives';
 
 export type NavItem = { label: string; icon: Icon; badge?: number | string };
@@ -31,6 +31,8 @@ export function AppShell({
   onNotificationClick,
   onNotificationsClear,
   jobs,
+  mode,
+  onModeChange,
 }: {
   dark: boolean;
   rtl?: boolean;
@@ -56,21 +58,48 @@ export function AppShell({
   onNotificationClick?: (n: { id: string; link?: string | null }) => void;
   onNotificationsClear?: () => void;
   jobs?: ReactNode;
+  mode?: string;
+  onModeChange?: (m: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
+  useEffect(() => { try { setCollapsed(localStorage.getItem('orbit.sidebarCollapsed') === '1'); } catch { /* ignore */ } }, []);
+  const toggleCollapse = () => setCollapsed((c) => { const n = !c; try { localStorage.setItem('orbit.sidebarCollapsed', n ? '1' : '0'); } catch { /* ignore */ } return n; });
   const flat = groups.flatMap((g) => g.items);
   let idx = 0;
+  const isJobs = mode === 'jobs';
   return (
-    <main className={`o-app${dark ? ' dark' : ''}`} dir={rtl ? 'rtl' : 'ltr'}>
+    <main className={`o-app${dark ? ' dark' : ''}${collapsed ? ' o-collapsed' : ''}`} dir={rtl ? 'rtl' : 'ltr'}>
       <aside className="o-sidebar">
-        <Brand collapse={() => {}} />
-        <div className="o-workspace">
-          <AppIcon size={30} />
-          <div>
-            <b>{workspace}</b>
-            <small>{workspaceSub}</small>
-          </div>
-          <ChevronDown size={15} className="o-muted" />
+        <Brand collapse={toggleCollapse} />
+        <div className="o-workspace-wrap">
+          <button className="o-workspace" onClick={() => onModeChange && setModeOpen((v) => !v)} aria-label="Switch mode" title={onModeChange ? 'Switch mode' : undefined}>
+            <AppIcon size={30} />
+            <div>
+              <b>{workspace}</b>
+              <small>{workspaceSub}</small>
+            </div>
+            {onModeChange && <ChevronDown size={15} className={`o-muted o-ws-caret${modeOpen ? ' open' : ''}`} />}
+          </button>
+          {modeOpen && onModeChange && (
+            <>
+              <div className="o-ws-backdrop" onClick={() => setModeOpen(false)} />
+              <div className="o-ws-menu">
+                <div className="o-ws-menu-label">Workspace mode</div>
+                <button className={`o-ws-opt${!isJobs ? ' active' : ''}`} onClick={() => { setModeOpen(false); if (isJobs) onModeChange('startup'); }}>
+                  <Sparkles size={16} />
+                  <div><b>Grow a business</b><span>Leads, research, outreach, campaigns</span></div>
+                  {!isJobs && <Check size={15} className="o-ws-check" />}
+                </button>
+                <button className={`o-ws-opt${isJobs ? ' active' : ''}`} onClick={() => { setModeOpen(false); if (!isJobs) onModeChange('jobs'); }}>
+                  <Briefcase size={16} />
+                  <div><b>Find a job</b><span>Résumé, jobs, applications, follow-ups</span></div>
+                  {isJobs && <Check size={15} className="o-ws-check" />}
+                </button>
+              </div>
+            </>
+          )}
         </div>
         {groups.map((g, gi) => (
           <div key={gi}>
@@ -80,7 +109,7 @@ export function AppShell({
                 const i = idx++;
                 const I = it.icon;
                 return (
-                  <button key={it.label} className={`o-nav-item${active === i ? ' active' : ''}`} onClick={() => onNavigate(i)}>
+                  <button key={it.label} title={it.label} className={`o-nav-item${active === i ? ' active' : ''}`} onClick={() => onNavigate(i)}>
                     <I size={17} strokeWidth={1.8} />
                     <span>{it.label}</span>
                     {it.badge !== undefined && it.badge !== 0 && <em>{it.badge}</em>}
