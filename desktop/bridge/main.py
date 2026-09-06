@@ -25,6 +25,7 @@ os.environ["ORBIT_BRIDGE_CONCAT"] = "1"  # tell search.py not to exec leads.py i
 import search  # noqa: E402
 import leads  # noqa: E402
 import social  # noqa: E402
+import jobs as jobsmod  # noqa: E402
 
 # leads.py was written to share search.py's namespace; give it the helpers it expects.
 for _name in ("now", "which", "run", "domain", "parse_exa_text", "ch_exa"):
@@ -32,6 +33,9 @@ for _name in ("now", "which", "run", "domain", "parse_exa_text", "ch_exa"):
 # and search.main() dispatches to the lead pipeline
 for _name in ("find_leads", "enrich", "export", "emit_line", "ANGLES_RESEARCH"):
     setattr(search, _name, getattr(leads, _name))
+for _name in ("now", "domain", "ch_exa"):
+    setattr(jobsmod, _name, getattr(search, _name))
+jobsmod.emit_line = leads.emit_line
 
 # Bundled Agent Reach extensions: the same executable doubles as their CLI entry point
 # (invoked through the .cmd shims in resources/tools/bin), so no Python is needed on the machine.
@@ -54,6 +58,19 @@ def _social_entry():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "jobs-stream":
+        os.environ.setdefault("PYTHONUTF8", "1")
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+        q = sys.argv[2] if len(sys.argv) > 2 else ""
+        target = int(sys.argv[3]) if len(sys.argv) > 3 else 200
+        if not q.strip():
+            leads.emit_line({"type": "error", "fatal": True, "error": "empty query"}); sys.exit(2)
+        res = jobsmod.find_jobs(q, target)
+        leads.emit_line({"type": "done", "count": res["count"], "result": res, "percent": 100})
+        sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "reddit-stream":
         os.environ.setdefault("PYTHONUTF8", "1")
         try:

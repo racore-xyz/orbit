@@ -18,6 +18,16 @@ pub struct Profile {
   pub offer: String,
   pub goals: String,
   pub language: String,
+  #[serde(default)]
+  pub resume_text: String,
+  #[serde(default)]
+  pub portfolio_text: String,
+  #[serde(default)]
+  pub target_roles: String,
+  #[serde(default)]
+  pub target_locations: String,
+  #[serde(default)]
+  pub seniority: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -40,6 +50,8 @@ pub struct Workspace {
   pub demo: bool,
   #[serde(default)]
   pub notifications: Vec<Notification>,
+  #[serde(default)]
+  pub mode: String, // startup | jobs
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -124,6 +136,7 @@ pub fn summary() -> serde_json::Value {
       "style_learned": style_learned, "style_edits": style_edits,
       "smtp": smtp_ok, "imap": imap_ok, "llm": llm_ok, "webhook": webhook,
     },
+    "mode": if w.mode.is_empty() { "startup".to_string() } else { w.mode.clone() },
     "storage": { "dir": storage_dir, "files": files }
   })
 }

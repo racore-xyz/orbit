@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { siAnthropic, siFacebook, siGooglegemini, siInstagram, siMistralai, siOpenrouter, siReddit, siTiktok, siX, siYoutube } from 'simple-icons';
-import { Activity, BarChart3, Bot, Check, ChevronRight, Clock, Compass, Copy, Download, ExternalLink, FileText, History, Inbox, KeyRound, Lightbulb, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
+import { Activity, BarChart3, Bot, Briefcase, Check, ChevronRight, Clock, Compass, Copy, Download, ExternalLink, FileCheck, FileText, Globe2, History, Inbox, KeyRound, Lightbulb, MapPin, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
 import {
   AppShell,
   Avatar,
@@ -46,6 +46,7 @@ export default function DesktopApp() {
   const { dark, toggleDark, lang, toggleLang, rtl, t } = useTheme();
   const [tab, setTab] = useState(0);
   const [ws, setWs] = useState<WsSummary | null>(null);
+  const jobsMode = ws?.mode === 'jobs';
   const reloadWs = async () => { try { setWs(await invoke<WsSummary>('workspace_get')); } catch { /* first run */ } };
   /* oxlint-disable react/react-compiler -- load the workspace once; refresh when the tab changes */
   useEffect(() => { void reloadWs(); }, [tab]);
@@ -75,7 +76,22 @@ export default function DesktopApp() {
   const [agentic, setAgentic] = useState(() => localStorage.getItem('orbit.agenticMode') !== 'off');
   const [connected, setConnected] = useState<string[]>(() => JSON.parse(localStorage.getItem('orbit.connected') || '[]'));
 
-  const groups: NavGroup[] = [
+  const groups: NavGroup[] = jobsMode ? [
+    {
+      label: t('Job search', 'البحث عن عمل'),
+      items: [
+        { label: t('Dashboard', 'لوحة التحكم'), icon: BarChart3 },
+        { label: t('Resume & ATS', 'السيرة والـ ATS'), icon: FileCheck },
+        { label: t('Find Jobs', 'ابحث عن وظائف'), icon: Briefcase },
+        { label: t('Applications', 'التقديمات'), icon: Send },
+        { label: t('Job Map', 'خريطة الوظائف'), icon: Globe2 },
+        { label: t('AI Agents', 'وكلاء الذكاء الاصطناعي'), icon: Bot },
+        { label: t('Integrations', 'التكاملات'), icon: Plug },
+        { label: t('History', 'السجل'), icon: History },
+      ],
+    },
+    { label: t('System', 'النظام'), items: [{ label: t('Settings', 'الإعدادات'), icon: Settings2 }] },
+  ] : [
     {
       label: t('Workspace', 'مساحة العمل'),
       items: [
@@ -94,6 +110,7 @@ export default function DesktopApp() {
     },
     { label: t('System', 'النظام'), items: [{ label: t('Settings', 'الإعدادات'), icon: Settings2 }] },
   ];
+  const JT = { dashboard: 0, resume: 1, find: 2, applications: 3, map: 4, agents: 5, integrations: 6, history: 7, settings: 8 } as const;
 
   return (
     <>
@@ -125,6 +142,7 @@ export default function DesktopApp() {
       onNotificationsClear={() => { void invoke('notifications_mark', { ids: [], read: true, clear: true }).then(() => reloadWs()); }}
       jobs={job ? <div className={`o-job${job.done ? ' done' : ''}`} title={job.label}><span className={`o-spinner${job.done ? ' done' : ''}`} /><span className="o-job-label">{job.label}</span><b>{job.percent}%</b>{!job.done && <button onClick={() => void invoke('job_cancel', { jobId: job.id })} aria-label="Cancel">✕</button>}</div> : null}
     >
+      {!jobsMode && (<>
       {tab === TAB.dashboard && <Dashboard t={t} go={setTab} ws={ws} onAutodraft={startAutodraft} jobRunning={!!job && !job.done} />}
       {tab === TAB.leads && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
       {tab === TAB.crm && <CrmPage t={t} go={setTab} />}
@@ -137,6 +155,17 @@ export default function DesktopApp() {
       {tab === TAB.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
       {tab === TAB.history && <HistoryPage t={t} onOpen={openSavedRun} />}
       {tab === TAB.settings && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
+      </>)}
+      {jobsMode && tab === JT.dashboard && <JobsDashboard t={t} ws={ws} go={setTab} />}
+      {jobsMode && tab === JT.resume && <ResumePage t={t} ws={ws} reload={reloadWs} />}
+      {jobsMode && tab === JT.find && <JobFinder t={t} />}
+      {jobsMode && tab === JT.applications && <ApplicationsPage t={t} ws={ws} />}
+      {jobsMode && tab === JT.map && <JobMapPage t={t} />}
+      {jobsMode && tab === JT.agents && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
+      {jobsMode && tab === JT.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
+      {jobsMode && tab === JT.history && <HistoryPage t={t} onOpen={openSavedRun} />}
+      {jobsMode && tab === JT.settings && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
+
     </AppShell>
       {ws && !ws.workspace.onboarding.completed && <Onboarding t={t} ws={ws} done={reloadWs} />}
       {ws?.workspace.onboarding.completed && ws.workspace.demo && !guideHidden && <Guide t={t} step={guideStep} setStep={setGuideStep} go={setTab} openRun={(id) => setOpenRun(id)} finish={endDemo} hide={() => setGuideHidden(true)} />}
@@ -1280,8 +1309,9 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
   );
 }
 
-type WsProfile = { name: string; company: string; role: string; website: string; email: string; industry: string; target_market: string; persona: string; offer: string; goals: string; language: string };
+type WsProfile = { name: string; company: string; role: string; website: string; email: string; industry: string; target_market: string; persona: string; offer: string; goals: string; language: string; resume_text?: string; portfolio_text?: string; target_roles?: string; target_locations?: string; seniority?: string };
 type WsSummary = {
+  mode?: string;
   workspace: { id: string; demo?: boolean; notifications?: { id: string; at: string; kind: string; title: string; text: string; read: boolean; link?: string | null }[]; created_at: string; updated_at: string; profile: WsProfile; onboarding: { completed: boolean; step: number; completed_at?: string | null; skipped_connect: boolean }; activity: { at: string; kind: string; text: string }[]; notes: string };
   progress: { percent: number; checklist: { id: string; label: string; done: boolean }[]; runs: number; lead_runs: number; research_runs: number; leads_total: number; contacts: number; sent: number; followups: number; replied: number; drafts: number; style_learned: boolean; style_edits: number; smtp: boolean; imap: boolean; llm: boolean; webhook: boolean };
   storage: { dir: string; files: { name: string; exists: boolean; size: number }[] };
@@ -1315,6 +1345,7 @@ function GmailTutorial({ t }: { t: T }) {
 function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<void> }) {
   const [step, setStep] = useState(Math.max(1, ws.workspace.onboarding.step || 1));
   const [p, setP] = useState<WsProfile>({ ...ws.workspace.profile });
+  const [mode, setMode] = useState<string>(ws.mode || 'startup');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [gmail, setGmail] = useState({ address: '', app_password: '' });
@@ -1323,7 +1354,7 @@ function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<
   const [llmOk, setLlmOk] = useState(false);
   const total = 3;
   const persist = async (patch: Partial<WsSummary['workspace']['onboarding']> = {}) => {
-    const w = { ...ws.workspace, profile: p, onboarding: { ...ws.workspace.onboarding, step, ...patch } };
+    const w = { ...ws.workspace, mode, profile: p, onboarding: { ...ws.workspace.onboarding, step, ...patch } };
     return invoke('workspace_save', { workspace: w });
   };
   const next = async () => {
@@ -1376,7 +1407,18 @@ function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<
 
         {step === 1 && (
           <>
-            <h2>{t('Who are you?', 'من أنت؟')}</h2>
+            <h2>{t('What will you use orbit. for?', 'هتستخدم orbit. لإيه؟')}</h2>
+            <p className="o-sub">{t('This changes the whole workspace. You can switch later in Settings.', 'ده يغيّر مساحة العمل بالكامل. يمكنك التبديل لاحقاً من الإعدادات.')}</p>
+            <div className="o-mode-pick">
+              <button className={`o-mode-card${mode !== 'jobs' ? ' active' : ''}`} onClick={() => { setMode('startup'); void invoke('workspace_save', { workspace: { ...ws.workspace, mode: 'startup', profile: p, onboarding: { ...ws.workspace.onboarding, step } } }); }}>
+                <IconTile icon={Send} tone="violet" size="lg" iconSize={20} /><b>{t('Grow a business', 'تنمية شركة')}</b><span>{t('Find leads, research markets, run outreach and campaigns.', 'إيجاد عملاء، أبحاث سوق، تواصل وحملات.')}</span>
+              </button>
+              <button className={`o-mode-card${mode === 'jobs' ? ' active' : ''}`} onClick={() => { setMode('jobs'); void invoke('workspace_save', { workspace: { ...ws.workspace, mode: 'jobs', profile: p, onboarding: { ...ws.workspace.onboarding, step } } }); }}>
+                <IconTile icon={Briefcase} tone="sky" size="lg" iconSize={20} /><b>{t('Find a job', 'البحث عن عمل')}</b><span>{t('Review your résumé, find jobs worldwide, tailor and apply.', 'راجع سيرتك، ابحث عن وظائف عالمياً، خصّص وتقدّم.')}</span>
+              </button>
+            </div>
+            <div style={{ height: 8 }} />
+            <h2 style={{ marginTop: 8 }}>{t('Who are you?', 'من أنت؟')}</h2>
             <p className="o-sub">{t('This is your identity in orbit. It signs your outreach and shapes every draft.', 'هذه هويتك في orbit. تُوقّع رسائلك وتشكّل كل مسودة.')}</p>
             <div className="o-form-grid">
               {field('name', t('Your name', 'اسمك'), 'Ahmed Mohamed')}
@@ -2014,5 +2056,248 @@ function Mailboxes({ t, mailboxes, reload }: { t: T; mailboxes: MBox[]; reload: 
         </div>
       ) : <EmptyState icon={Mail} title={t('No mailboxes yet', 'لا توجد صناديق بعد')} text={t('Add a Gmail (app password) or SMTP account to send. Add several to spread the volume.', 'أضف حساب Gmail (كلمة مرور تطبيق) أو SMTP للإرسال. أضف عدة حسابات لتوزيع الحجم.')} />}
     </Card>
+  );
+}
+
+type JApp = { id: string; company: string; role: string; location: string; country: string; url: string; source: string; status: string; job_desc: string; contact_email?: string | null; tailored_resume: string; cover_letter: string; applied_at?: string | null; follow_ups: { at: string; done: boolean }[]; notes: string; created_at: string };
+type JState = { applications: JApp[]; settings: { follow_up_max: number; follow_up_days: number } };
+type JJob = { id: string; title: string; role: string; company: string; location: string; country: string; url: string; source: string; snippet: string };
+type JobResult = { query: string; count: number; jobs: JJob[]; demand: { country: string; count: number; lat: number; lon: number }[]; fetched_at: string };
+
+function JobsDashboard({ t, ws, go }: { t: T; ws: WsSummary | null; go: (i: number) => void }) {
+  const [js, setJs] = useState<JState | null>(null);
+  /* oxlint-disable react/react-compiler -- load once */
+  useEffect(() => { void invoke<JState>('jobs_state').then(setJs).catch(() => undefined); }, [ws?.workspace.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const apps = js?.applications || [];
+  const now = new Date().toISOString();
+  const applied = apps.filter((a) => a.applied_at).length;
+  const replied = apps.filter((a) => a.status === 'replied').length;
+  const dueFu = apps.flatMap((a) => a.follow_ups.filter((f) => !f.done && f.at <= now).map(() => a)).length;
+  const name = ws?.workspace.profile.name?.split(' ')[0];
+  const hasResume = (ws?.workspace.profile.resume_text || ws?.workspace.profile.offer || '').length > 60;
+  return (
+    <>
+      <PageHead title={name ? t(`Let's land your next role, ${name}!`, `يلا نجيبلك وظيفتك الجاية يا ${name}!`) : t('Job search', 'البحث عن عمل')} spark={false} sub={t('Your applications, follow-ups and hiring demand at a glance.', 'تقديماتك ومتابعاتك والطلب على الوظائف في لمحة.')} actions={<><Btn variant="secondary" onClick={() => go(1)}>{t('Review résumé', 'راجع السيرة')}</Btn><Btn icon={Briefcase} onClick={() => go(2)}>{t('Find jobs', 'ابحث عن وظائف')}</Btn></>} />
+      <div className="o-grid o-grid-4">
+        <StatCard icon={Briefcase} label={t('In pipeline', 'في القائمة')} value={String(apps.length)} trend={null} tone="violet" />
+        <StatCard icon={Send} label={t('Applied', 'تم التقديم')} value={String(applied)} trend={null} tone="sky" />
+        <StatCard icon={MessageSquare} label={t('Responses', 'ردود')} value={String(replied)} trend={null} tone="green" />
+        <StatCard icon={Clock} label={t('Follow-ups due', 'متابعات مستحقة')} value={String(dueFu)} trend={null} tone="orange" />
+      </div>
+      <div className="o-grid o-grid-2">
+        <Card>
+          <CardHead title={t('Get started', 'ابدأ')} />
+          <button className={`o-check${hasResume ? ' done' : ''}`} onClick={() => go(1)}><i>{hasResume ? '✓' : ''}</i><span>{t('Add and review your résumé (ATS check)', 'أضف وراجع سيرتك (فحص ATS)')}</span><ChevronRight size={14} /></button>
+          <button className={`o-check${apps.length ? ' done' : ''}`} onClick={() => go(2)}><i>{apps.length ? '✓' : ''}</i><span>{t('Find jobs and add them to your pipeline', 'ابحث عن وظائف وأضفها لقائمتك')}</span><ChevronRight size={14} /></button>
+          <button className={`o-check${apps.some((a) => a.tailored_resume) ? ' done' : ''}`} onClick={() => go(3)}><i>{apps.some((a) => a.tailored_resume) ? '✓' : ''}</i><span>{t('Tailor a résumé + cover letter per company', 'خصّص سيرة + خطاب تغطية لكل شركة')}</span><ChevronRight size={14} /></button>
+          <button className={`o-check${applied ? ' done' : ''}`} onClick={() => go(3)}><i>{applied ? '✓' : ''}</i><span>{t('Apply and schedule your follow-ups', 'قدّم وجدول متابعاتك')}</span><ChevronRight size={14} /></button>
+        </Card>
+        <Card>
+          <CardHead title={t('Recent applications', 'أحدث التقديمات')} action={<ViewAll label={t('All', 'الكل')} onClick={() => go(3)} />} />
+          {apps.length ? apps.slice(0, 6).map((x) => <Row key={x.id} icon={Briefcase} title={`${x.role} · ${x.company || x.source}`} meta={`${x.location || x.country} · ${x.status}`} right={<Chip tone={x.status === 'replied' ? 'green' : x.status === 'applied' ? 'violet' : 'neutral'}>{x.status}</Chip>} />) : <EmptyState icon={Briefcase} title={t('No applications yet', 'لا توجد تقديمات بعد')} text={t('Find jobs to build your pipeline.', 'ابحث عن وظائف لبناء قائمتك.')} />}
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () => Promise<void> }) {
+  const [resume, setResume] = useState(ws?.workspace.profile.offer || '');
+  const [portfolio, setPortfolio] = useState(ws?.workspace.profile.persona || '');
+  const [role, setRole] = useState(ws?.workspace.profile.target_roles || ws?.workspace.profile.role || '');
+  const [report, setReport] = useState('');
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  /* oxlint-disable react/react-compiler -- sync from workspace once */
+  useEffect(() => { if (ws) { setResume(ws.workspace.profile.offer || ''); setPortfolio(ws.workspace.profile.persona || ''); setRole(ws.workspace.profile.target_roles || ws.workspace.profile.role || ''); } }, [ws?.workspace.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const save = async () => { if (!ws) return; setBusy('save'); try { await invoke('workspace_save', { workspace: { ...ws.workspace, profile: { ...ws.workspace.profile, offer: resume, persona: portfolio, target_roles: role } } }); await reload(); setMsg({ tone: 'green', text: t('Saved', 'تم الحفظ') }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const review = async () => { setBusy('review'); setMsg(null); try { await save(); setReport(await invoke<string>('jobs_review_resume', { resume, targetRole: role })); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  return (
+    <>
+      <PageHead eyebrow={t('Résumé & ATS', 'السيرة والـ ATS')} title={t('Resume & ATS check', 'السيرة وفحص ATS')} spark={false} sub={t('Paste your résumé and portfolio once. The model reviews ATS compatibility and rewrites weak points, and every tailored version is built from this.', 'الصق سيرتك ومعرض أعمالك مرة واحدة. النموذج يفحص توافق ATS ويعيد صياغة نقاط الضعف، وكل نسخة مخصصة تُبنى من هنا.')} actions={<><Btn variant="secondary" onClick={save} disabled={!!busy}>{busy === 'save' ? t('Saving…', 'جاري الحفظ…') : t('Save', 'حفظ')}</Btn><Btn icon={FileCheck} onClick={review} disabled={!!busy}>{busy === 'review' ? t('Analysing…', 'جاري التحليل…') : t('Run ATS review', 'شغّل فحص ATS')}</Btn></>} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
+      <div className="o-grid o-grid-2">
+        <Card><CardHead title={t('Base résumé', 'السيرة الأساسية')} sub={t('Plain text of your CV.', 'نص سيرتك الذاتية.')} /><label className="o-field">{t('Target role', 'الوظيفة المستهدفة')}<input value={role} onChange={(e) => setRole(e.target.value)} placeholder={t('e.g. Senior Backend Engineer', 'مثال: مهندس Backend أول')} /></label><textarea className="o-input" rows={16} style={{ width: '100%', height: 'auto', padding: 10, marginTop: 10, fontFamily: 'var(--font-sans)' }} value={resume} onChange={(e) => setResume(e.target.value)} placeholder={t('Paste your résumé text…', 'الصق نص سيرتك…')} /></Card>
+        <Card><CardHead title={t('Portfolio / projects', 'معرض الأعمال / المشاريع')} sub={t('Links, projects, achievements used to tailor per job.', 'روابط ومشاريع وإنجازات تُستخدم للتخصيص لكل وظيفة.')} /><textarea className="o-input" rows={19} style={{ width: '100%', height: 'auto', padding: 10, fontFamily: 'var(--font-sans)' }} value={portfolio} onChange={(e) => setPortfolio(e.target.value)} placeholder={t('Projects, GitHub, live sites, notable results…', 'مشاريع، GitHub، مواقع حية، نتائج بارزة…')} /></Card>
+      </div>
+      {report && <Card><CardHead title={t('ATS review', 'فحص ATS')} action={<Btn variant="ghost" size="sm" icon={Copy} onClick={() => navigator.clipboard.writeText(report)}>{t('Copy', 'نسخ')}</Btn>} /><Md text={report} /></Card>}
+    </>
+  );
+}
+
+function WorldDemandMap({ demand }: { demand: { country: string; count: number; lat: number; lon: number }[] }) {
+  const W = 1000, H = 500;
+  const max = Math.max(1, ...demand.map((d) => d.count));
+  const proj = (lat: number, lon: number) => [((lon + 180) / 360) * W, ((90 - lat) / 180) * H];
+  const color = (n: number) => { const x = n / max; return x > 0.66 ? 'var(--coral)' : x > 0.33 ? 'var(--orange)' : 'var(--violet)'; };
+  return (
+    <div className="o-worldmap">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
+        <rect width={W} height={H} rx="14" fill="var(--surface-2)" />
+        {[...Array(11)].map((_, i) => <line key={`v${i}`} x1={(i / 10) * W} y1="0" x2={(i / 10) * W} y2={H} stroke="var(--line)" strokeWidth="1" />)}
+        {[...Array(7)].map((_, i) => <line key={`h${i}`} x1="0" y1={(i / 6) * H} x2={W} y2={(i / 6) * H} stroke="var(--line)" strokeWidth="1" />)}
+        {[['N. America', 40, -100], ['Europe', 50, 15], ['MENA / Gulf', 26, 45], ['S. Asia', 20, 78], ['Africa', 2, 20]].map(([lbl, la, lo]) => { const [x, y] = proj(la as number, lo as number); return <text key={lbl as string} x={x} y={y - 40} textAnchor="middle" fontSize="13" fill="var(--muted-2)">{lbl}</text>; })}
+        {demand.filter((d) => d.country !== 'Unknown' && !(d.lat === 0 && d.lon === 0)).map((d) => { const [x, y] = proj(d.lat, d.lon); const r = 8 + (d.count / max) * 34; return (
+          <g key={d.country}><circle cx={x} cy={y} r={r} fill={color(d.count)} fillOpacity="0.75" stroke="#fff" strokeWidth="1.5" /><text x={x} y={y + 4} textAnchor="middle" fontSize="12" fontWeight="700" fill="#fff">{d.count}</text><text x={x} y={y + r + 14} textAnchor="middle" fontSize="11" fill="var(--text-2)">{d.country}</text></g>
+        ); })}
+        {demand.some((d) => d.country === 'Remote' && d.count) && <g><rect x={W - 150} y={16} width="134" height="34" rx="8" fill="var(--green-soft)" /><text x={W - 83} y={38} textAnchor="middle" fontSize="13" fill="var(--green)" fontWeight="700">🌍 Remote {demand.find((d) => d.country === 'Remote')?.count}</text></g>}
+      </svg>
+    </div>
+  );
+}
+
+function JobFinder({ t }: { t: T }) {
+  const [query, setQuery] = useState('');
+  const [target, setTarget] = useState(150);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [res, setRes] = useState<JobResult | null>(null);
+  const [live, setLive] = useState<JJob[]>([]);
+  const [progress, setProgress] = useState<{ percent: number; label: string }>({ percent: 0, label: '' });
+  const [fCountry, setFCountry] = useState('all');
+  const [fSource, setFSource] = useState('all');
+  const [added, setAdded] = useState<Set<string>>(new Set());
+  const jobRef = useRef<string | null>(null);
+  const un = useRef<UnlistenFn | null>(null);
+  const stop = () => { un.current?.(); un.current = null; jobRef.current = null; };
+  /* oxlint-disable react/react-compiler */
+  useEffect(() => () => { if (jobRef.current) void invoke('bridge_cancel', { jobId: jobRef.current }); stop(); }, []);
+  /* oxlint-enable react/react-compiler */
+  const run = async () => {
+    if (!query.trim()) { setError(t('Type a role, skills or title first.', 'اكتب وظيفة أو مهارات أولاً.')); return; }
+    const id = `jobs-${Date.now()}`; jobRef.current = id; setBusy(true); setError(''); setRes(null); setLive([]); setProgress({ percent: 0, label: t('Searching job boards…', 'جاري البحث في مواقع التوظيف…') });
+    un.current = await listen<Record<string, unknown>>(`bridge://${id}`, (ev) => {
+      const e = ev.payload as { type: string; percent?: number; query?: string; count?: number; new?: number; leads?: JJob[]; error?: string; fatal?: boolean; result?: JobResult };
+      if (e.type === 'call') setProgress({ percent: e.percent ?? 0, label: e.query || '' });
+      else if (e.type === 'batch') { setLive((l) => [...l, ...(e.leads || [])]); setProgress({ percent: e.percent ?? 0, label: t(`+${e.new} · ${e.count} jobs`, `+${e.new} · ${e.count} وظيفة`) }); }
+      else if (e.type === 'error') { if (e.fatal) { setError(e.error || 'failed'); setBusy(false); stop(); } }
+      else if (e.type === 'done' && e.result) { setRes(e.result); setLive(e.result.jobs); setProgress({ percent: 100, label: t(`${e.result.count} jobs found`, `${e.result.count} وظيفة`) }); void invoke('workspace_log', { kind: 'research', text: `Job search: "${e.result.query}" → ${e.result.count} jobs` }); setBusy(false); stop(); }
+      else if (e.type === 'cancelled') { setBusy(false); stop(); }
+    });
+    try { await invoke('jobs_search_stream', { jobId: id, query, target }); } catch (e) { setError(String(e)); setBusy(false); stop(); }
+  };
+  const cancel = async () => { if (jobRef.current) await invoke('bridge_cancel', { jobId: jobRef.current }); };
+  const addToPipeline = async (j: JJob) => { try { await invoke('jobs_application_add', { company: j.company, role: j.role, location: j.location, country: j.country, url: j.url, source: j.source, jobDesc: j.snippet, contactEmail: null }); setAdded((s) => new Set([...s, j.id])); } catch { /* dup */ setAdded((s) => new Set([...s, j.id])); } };
+  const jobs = res ? res.jobs : live;
+  const countries = [...new Set(jobs.map((j) => j.country))].sort();
+  const sources = [...new Set(jobs.map((j) => j.source))].sort();
+  const shown = jobs.filter((j) => (fCountry === 'all' || j.country === fCountry) && (fSource === 'all' || j.source === fSource));
+  return (
+    <>
+      <PageHead eyebrow={t('Global · Arab · Gulf boards', 'مواقع عالمية · عربية · خليجية')} title={t('Find Jobs', 'ابحث عن وظائف')} spark={false} sub={t('One search across LinkedIn, Indeed, Glassdoor, Bayt, Wuzzuf, GulfTalent, NaukriGulf and more, through Agent Reach.', 'بحث واحد عبر LinkedIn وIndeed وGlassdoor وBayt وWuzzuf وGulfTalent وNaukriGulf وغيرها، عبر Agent Reach.')} />
+      <Card>
+        <div className="o-research-input">
+          <IconTile icon={Briefcase} tone="violet" />
+          <input className="o-input" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run()} placeholder={t('e.g. Backend engineer Node.js, or Product manager fintech', 'مثال: Backend engineer Node.js أو Product manager fintech')} />
+          <label className="o-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>{t('Target', 'العدد')}<input type="number" min={10} max={2000} step={50} value={target} onChange={(e) => setTarget(Number(e.target.value) || 150)} style={{ width: 80 }} /></label>
+          <Btn onClick={run} disabled={busy}>{busy ? t('Searching…', 'جاري البحث…') : t('Find jobs', 'ابحث')}</Btn>
+        </div>
+        {(busy || progress.percent > 0) && <div className="o-loader"><div className="o-loader-head"><span className={`o-spinner${busy ? '' : ' done'}`} /><b>{progress.percent}%</b><span className="o-loader-label">{progress.label}</span>{busy && <Btn variant="ghost" size="sm" onClick={cancel}>{t('Cancel', 'إلغاء')}</Btn>}</div><div className="o-progress lg"><i style={{ width: `${progress.percent}%` }} /></div></div>}
+        {error && <div className="o-result error">{error}</div>}
+      </Card>
+      {res && res.demand.length > 0 && <Card><CardHead title={t('Where the jobs are', 'أين الوظائف')} sub={t('Hiring demand for this search, by country.', 'الطلب على التوظيف لهذا البحث، حسب الدولة.')} /><WorldDemandMap demand={res.demand} /></Card>}
+      {jobs.length > 0 && (
+        <Card>
+          <CardHead title={t(`${shown.length} of ${jobs.length} jobs`, `${shown.length} من ${jobs.length} وظيفة`)} action={<div className="o-flex"><select className="o-input" aria-label="Country" style={{ height: 32 }} value={fCountry} onChange={(e) => setFCountry(e.target.value)}><option value="all">{t('All countries', 'كل الدول')}</option>{countries.map((c) => <option key={c} value={c}>{c}</option>)}</select><select className="o-input" aria-label="Source" style={{ height: 32 }} value={fSource} onChange={(e) => setFSource(e.target.value)}><option value="all">{t('All sources', 'كل المصادر')}</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>} />
+          <Table columns={[t('Role', 'الوظيفة'), t('Company', 'الشركة'), t('Location', 'الموقع'), t('Source', 'المصدر'), '']}>
+            {shown.slice(0, 200).map((j) => (
+              <tr key={j.url}>
+                <td style={{ whiteSpace: 'normal', maxWidth: 340 }}><a href={j.url} target="_blank" rel="noreferrer"><b>{j.role || j.title}</b></a></td>
+                <td>{j.company || '—'}</td>
+                <td>{j.location || j.country}</td>
+                <td>{j.source}</td>
+                <td>{added.has(j.id) ? <Chip tone="green">{t('Added', 'مضاف')}</Chip> : <Btn size="sm" variant="secondary" onClick={() => addToPipeline(j)}>{t('Add', 'إضافة')}</Btn>}</td>
+              </tr>
+            ))}
+          </Table>
+        </Card>
+      )}
+    </>
+  );
+}
+
+function ApplicationsPage({ t, ws }: { t: T; ws: WsSummary | null }) {
+  const [js, setJs] = useState<JState | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const load = async () => { try { setJs(await invoke<JState>('jobs_state')); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
+  /* oxlint-disable react/react-compiler */
+  useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const act = async (k: string, fn: () => Promise<string>) => { setBusy(k); setMsg(null); try { setMsg({ tone: 'green', text: await fn() }); await load(); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const apps = js?.applications || [];
+  const app = apps.find((a) => a.id === sel) || null;
+  const setCfg = (max: number, days: number) => act('cfg', async () => { setJs(await invoke<JState>('jobs_set_settings', { followUpMax: max, followUpDays: days })); return t('Follow-up settings saved', 'تم حفظ إعدادات المتابعة'); });
+  const hasResume = (ws?.workspace.profile.offer || '').length > 40;
+  return (
+    <>
+      <PageHead eyebrow={t('Pipeline', 'خط التقديم')} title={t('Applications', 'التقديمات')} spark={false} sub={t('Tailor a résumé and cover letter per company, mark applied, and let orbit. schedule your follow-ups.', 'خصّص سيرة وخطاب تغطية لكل شركة، علّم كمُقدَّم، ودع orbit. يجدول متابعاتك.')} actions={<div className="o-flex"><label className="o-flex" style={{ fontSize: 12 }}>{t('Follow-ups', 'متابعات')}<input className="o-input" style={{ height: 30, width: 50 }} type="number" min={0} max={5} defaultValue={js?.settings.follow_up_max ?? 2} onBlur={(e) => setCfg(Number(e.target.value) || 0, js?.settings.follow_up_days ?? 4)} /></label><label className="o-flex" style={{ fontSize: 12 }}>{t('every', 'كل')}<input className="o-input" style={{ height: 30, width: 50 }} type="number" min={1} defaultValue={js?.settings.follow_up_days ?? 4} onBlur={(e) => setCfg(js?.settings.follow_up_max ?? 2, Number(e.target.value) || 4)} />{t('days', 'يوم')}</label></div>} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
+      {!hasResume && <div className="o-result"><FileCheck size={16} />{t('Add your base résumé under Resume & ATS first, so tailoring can use it.', 'أضف سيرتك الأساسية تحت السيرة والـ ATS أولاً حتى يستخدمها التخصيص.')}</div>}
+      {apps.length ? (
+        <div className="o-chat" style={{ height: 'calc(100vh - 250px)' }}>
+          <aside className="o-chat-list">
+            <div className="o-chat-items">
+              {apps.map((x) => (
+                <button key={x.id} className={`o-chat-item${sel === x.id ? ' active' : ''}`} onClick={() => setSel(x.id)}>
+                  <div className="o-avatar">{(x.company || x.role)[0]?.toUpperCase()}</div>
+                  <div className="o-chat-item-body"><div className="o-between"><b>{x.role}</b><Chip tone={x.status === 'replied' ? 'green' : x.status === 'applied' ? 'violet' : x.status === 'tailored' ? 'sky' : 'neutral'}>{x.status}</Chip></div><span className="o-chat-snippet">{x.company || x.source} · {x.location || x.country}</span></div>
+                </button>
+              ))}
+            </div>
+          </aside>
+          <section className="o-chat-pane" style={{ overflow: 'auto', padding: 18 }}>
+            {app ? (
+              <>
+                <div className="o-between" style={{ flexWrap: 'wrap' }}>
+                  <div><h2 style={{ fontSize: 18 }}>{app.role}</h2><small className="o-muted">{app.company || app.source} · {app.location || app.country} · <a href={app.url} target="_blank" rel="noreferrer">{t('view posting', 'عرض الإعلان')}</a></small></div>
+                  <div className="o-flex">
+                    <Btn variant="ai" size="sm" icon={Sparkles} onClick={() => act('tailor-' + app.id, async () => { setJs(await invoke<JState>('jobs_tailor', { id: app.id })); return t('Résumé + cover letter tailored to this job.', 'تم تخصيص السيرة وخطاب التغطية لهذه الوظيفة.'); })} disabled={!!busy}>{busy === 'tailor-' + app.id ? t('Tailoring…', 'جاري التخصيص…') : t('Tailor résumé + cover letter', 'خصّص السيرة + الخطاب')}</Btn>
+                    {app.status !== 'applied' && app.status !== 'replied' && <Btn size="sm" icon={Check} onClick={() => act('applied', async () => { setJs(await invoke<JState>('jobs_application_mark_applied', { id: app.id })); return t('Marked applied. Follow-ups scheduled.', 'تم التعليم كمُقدَّم. جُدولت المتابعات.'); })} disabled={!!busy}>{t('Mark applied', 'علّم كمُقدَّم')}</Btn>}
+                    {app.status === 'applied' && <Btn size="sm" variant="secondary" onClick={() => act('replied', async () => { setJs(await invoke<JState>('jobs_application_update', { id: app.id, patch: { status: 'replied' } })); return t('Marked as responded', 'تم التعليم كرد'); })}>{t('Got a response', 'وصل رد')}</Btn>}
+                    <button className="o-more" aria-label="Delete" onClick={() => act('del', async () => { setJs(await invoke<JState>('jobs_application_delete', { id: app.id })); setSel(null); return t('Removed', 'تمت الإزالة'); })}><Trash2 size={14} /></button>
+                  </div>
+                </div>
+                {app.follow_ups.length > 0 && <div className="o-flex o-mt" style={{ flexWrap: 'wrap' }}>{app.follow_ups.map((f, i) => <Chip key={i} tone={f.done ? 'green' : new Date(f.at).toISOString() <= new Date().toISOString() ? 'orange' : 'neutral'}>{t(`Follow-up ${i + 1}`, `متابعة ${i + 1}`)} · {new Date(f.at).toLocaleDateString()}{f.done ? ' ✓' : ''}</Chip>)}</div>}
+                <label className="o-field o-mt">{t('Job description (paste for better tailoring)', 'وصف الوظيفة (الصقه لتخصيص أفضل)')}<textarea rows={4} value={app.job_desc} onChange={(e) => setJs((s) => s ? { ...s, applications: s.applications.map((y) => y.id === app.id ? { ...y, job_desc: e.target.value } : y) } : s)} onBlur={(e) => void invoke('jobs_application_update', { id: app.id, patch: { job_desc: e.target.value } })} /></label>
+                <div className="o-grid o-grid-2 o-mt">
+                  <Card><CardHead title={t('Tailored résumé', 'السيرة المخصصة')} action={app.tailored_resume ? <Btn variant="ghost" size="sm" icon={Copy} onClick={() => navigator.clipboard.writeText(app.tailored_resume)}>{t('Copy', 'نسخ')}</Btn> : undefined} />{app.tailored_resume ? <Md text={app.tailored_resume} /> : <EmptyState icon={FileText} title={t('Not tailored yet', 'غير مخصصة بعد')} text={t('Click Tailor to generate.', 'اضغط تخصيص للتوليد.')} />}</Card>
+                  <Card><CardHead title={t('Cover letter', 'خطاب التغطية')} action={app.cover_letter ? <Btn variant="ghost" size="sm" icon={Copy} onClick={() => navigator.clipboard.writeText(app.cover_letter)}>{t('Copy', 'نسخ')}</Btn> : undefined} />{app.cover_letter ? <div className="o-md" style={{ whiteSpace: 'pre-wrap' }}>{app.cover_letter}</div> : <EmptyState icon={FileText} title={t('No cover letter yet', 'لا يوجد خطاب بعد')} text="" />}</Card>
+                </div>
+              </>
+            ) : <EmptyState icon={Briefcase} title={t('Pick an application', 'اختر تقديماً')} text="" />}
+          </section>
+        </div>
+      ) : <Card><EmptyState icon={Briefcase} title={t('No applications yet', 'لا توجد تقديمات بعد')} text={t('Go to Find Jobs, search, and add postings to your pipeline.', 'اذهب لابحث عن وظائف، ابحث، وأضف إعلانات لقائمتك.')} /></Card>}
+    </>
+  );
+}
+
+function JobMapPage({ t }: { t: T }) {
+  const [demand, setDemand] = useState<{ country: string; count: number; lat: number; lon: number }[]>([]);
+  const [runs, setRuns] = useState<RunMeta[]>([]);
+  /* oxlint-disable react/react-compiler */
+  useEffect(() => {
+    void invoke<JState>('jobs_state').then((s) => {
+      const by = new Map<string, number>();
+      const LL: Record<string, [number, number]> = { Egypt: [26.8, 30.8], 'Saudi Arabia': [23.9, 45.1], 'United Arab Emirates': [23.4, 53.8], Qatar: [25.3, 51.2], Kuwait: [29.3, 47.5], Bahrain: [26, 50.5], Oman: [21.5, 55.9], Jordan: [31.2, 36.5], Morocco: [31.8, -7.1], 'United Kingdom': [55.4, -3.4], Germany: [51.2, 10.5], France: [46.2, 2.2], Netherlands: [52.1, 5.3], 'United States': [37.1, -95.7], Canada: [56.1, -106.3], India: [20.6, 78.9], Singapore: [1.35, 103.8], Remote: [0, 0] };
+      s.applications.forEach((a) => by.set(a.country, (by.get(a.country) || 0) + 1));
+      setDemand([...by.entries()].map(([country, count]) => ({ country, count, lat: (LL[country] || [0, 0])[0], lon: (LL[country] || [0, 0])[1] })).sort((x, y) => y.count - x.count));
+    }).catch(() => undefined);
+    void invoke<RunMeta[]>('run_list').then((r) => setRuns(r.filter((x) => x.query))).catch(() => undefined);
+  }, []);
+  /* oxlint-enable react/react-compiler */
+  return (
+    <>
+      <PageHead eyebrow={t('Global hiring demand', 'الطلب العالمي على التوظيف')} title={t('Job Map', 'خريطة الوظائف')} spark={false} sub={t('Hiring hotspots from your pipeline and searches. Bigger, warmer circles mean more openings.', 'بؤر التوظيف من قائمتك وأبحاثك. الدوائر الأكبر والأدفأ تعني وظائف أكثر.')} />
+      <Card><WorldDemandMap demand={demand} /></Card>
+      <div className="o-grid o-grid-2">
+        <Card><CardHead title={t('Top countries', 'أعلى الدول')} />{demand.length ? demand.filter((d) => d.country !== 'Unknown').slice(0, 10).map((d) => <Row key={d.country} icon={MapPin} title={d.country} meta={t(`${d.count} in your pipeline`, `${d.count} في قائمتك`)} right={<Chip tone="violet">{d.count}</Chip>} />) : <EmptyState icon={Globe2} title={t('No data yet', 'لا توجد بيانات بعد')} text={t('Add jobs to your pipeline to populate the map.', 'أضف وظائف لقائمتك لملء الخريطة.')} />}</Card>
+        <Card><CardHead title={t('Recent searches', 'أحدث عمليات البحث')} />{runs.slice(0, 8).map((r) => <Row key={r.id} icon={Briefcase} title={r.query} meta={`${r.count} · ${new Date(r.saved_at).toLocaleDateString()}`} />)}{!runs.length && <EmptyState icon={Search} title={t('No searches yet', 'لا يوجد بحث بعد')} text="" />}</Card>
+      </div>
+    </>
   );
 }

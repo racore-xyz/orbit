@@ -3,6 +3,7 @@ mod llm;
 mod outreach;
 mod workspace;
 mod quota;
+mod jobs;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -147,6 +148,14 @@ fn social_reddit_stream(app: tauri::AppHandle, job_id: String, params_json: Stri
   let file = dir.join(format!("reddit-{job_id}.json"));
   std::fs::write(&file, params_json).map_err(|e| e.to_string())?;
   stream_bridge(app, job_id, vec!["reddit-stream".into(), file.to_string_lossy().into_owned()])
+}
+
+/// Job search across global + Arab/Gulf job boards, streamed like the other research jobs.
+#[tauri::command]
+fn jobs_search_stream(app: tauri::AppHandle, job_id: String, query: String, target: Option<u32>) -> Result<(), String> {
+  if query.trim().is_empty() { return Err("Enter a role, skills or query first".into()); }
+  let t = target.unwrap_or(200).clamp(10, 2000).to_string();
+  stream_bridge(app, job_id, vec!["jobs-stream".into(), query.trim().into(), t])
 }
 
 #[tauri::command]
@@ -416,6 +425,29 @@ async fn quota_set(limits: quota::Limits) -> Result<quota::Limits, String> { blo
 #[tauri::command]
 async fn llm_set_rate_limit(provider: String, rpm: u32) -> Result<(), String> { blocking!(llm::set_rate_limit(&provider, rpm)) }
 
+// ---------------------------------------------------------------- Jobs (job-seeking mode)
+#[tauri::command]
+async fn jobs_state() -> Result<jobs::JobsState, String> { Ok(blocking!(jobs::state())) }
+#[tauri::command]
+async fn jobs_save(state: jobs::JobsState) -> Result<jobs::JobsState, String> { blocking!(jobs::save_state(state)) }
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn jobs_application_add(company: String, role: String, location: String, country: String, url: String, source: String, job_desc: String, contact_email: Option<String>) -> Result<jobs::JobsState, String> { blocking!(jobs::application_add(company, role, location, country, url, source, job_desc, contact_email)) }
+#[tauri::command]
+async fn jobs_application_update(id: String, patch: serde_json::Value) -> Result<jobs::JobsState, String> { blocking!(jobs::application_update(id, patch)) }
+#[tauri::command]
+async fn jobs_application_delete(id: String) -> Result<jobs::JobsState, String> { blocking!(jobs::application_delete(id)) }
+#[tauri::command]
+async fn jobs_application_mark_applied(id: String) -> Result<jobs::JobsState, String> { blocking!(jobs::application_mark_applied(id)) }
+#[tauri::command]
+async fn jobs_set_settings(follow_up_max: u32, follow_up_days: u32) -> Result<jobs::JobsState, String> { blocking!(jobs::set_settings(follow_up_max, follow_up_days)) }
+#[tauri::command]
+async fn jobs_review_resume(resume: String, target_role: String) -> Result<String, String> { blocking!(jobs::review_resume(resume, target_role)) }
+#[tauri::command]
+async fn jobs_tailor(id: String) -> Result<jobs::JobsState, String> { blocking!(jobs::tailor(id)) }
+#[tauri::command]
+async fn jobs_demand() -> Result<serde_json::Value, String> { Ok(blocking!(jobs::demand())) }
+
 #[tauri::command]
 fn provider_env_status() -> serde_json::Value {
   let keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"];
@@ -427,7 +459,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }
