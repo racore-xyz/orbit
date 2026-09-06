@@ -6,6 +6,7 @@ import { siAnthropic, siFacebook, siGooglegemini, siInstagram, siMistralai, siOp
 import { Activity, BarChart3, Bot, Check, ChevronRight, Clock, Compass, Copy, Download, ExternalLink, FileText, History, Inbox, KeyRound, Lightbulb, Radio, Mail, MessageSquare, Plug, RefreshCw, Search, Send, Settings2, Shield, Sparkles, Target, Trash2, Users, X, Zap } from 'lucide-react';
 import {
   AppShell,
+  Avatar,
   Btn,
   Card,
   CardHead,
@@ -125,7 +126,7 @@ export default function DesktopApp() {
     >
       {tab === TAB.dashboard && <Dashboard t={t} go={setTab} ws={ws} onAutodraft={startAutodraft} jobRunning={!!job && !job.done} />}
       {tab === TAB.leads && <LeadFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
-      {tab === TAB.crm && <Module t={t} title={t('CRM', 'إدارة العملاء')} icon={Users} action={t('Add contact', 'إضافة جهة اتصال')} />}
+      {tab === TAB.crm && <CrmPage t={t} go={setTab} />}
       {tab === TAB.campaigns && <Module t={t} title={t('Campaigns', 'الحملات')} icon={Send} action={t('Create campaign', 'إنشاء حملة')} />}
       {tab === TAB.outreach && <Outreach t={t} seed={outreachSeed} onSeeded={() => setOutreachSeed(null)} />}
       {tab === TAB.templates && <TemplatesPage t={t} />}
@@ -315,20 +316,24 @@ function LlmProviders({ t, agentic, setAgentic, embedded }: { t: T; agentic?: bo
           const icon = iconFor(p.id);
           return (
             <Card className="o-llm" key={p.id}>
-              <div className="o-provider-logo">{icon ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={icon.path} fill="currentColor" /></svg> : <span>{p.name[0]}</span>}</div>
-              <div>
-                <h2>{p.name}</h2>
-                <p>{p.models.join(' · ')}</p>
-                <small><a href={p.docs} target="_blank" rel="noreferrer">{t('Get API key', 'احصل على مفتاح')}</a></small>
+              <div className="o-llm-head">
+                <div className="o-provider-logo">{icon ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d={icon.path} fill="currentColor" /></svg> : <span>{p.name[0]}</span>}</div>
+                <div className="o-llm-name">
+                  <h2>{p.name}</h2>
+                  <p title={p.models.join(', ')}>{p.models.join(' · ')}</p>
+                </div>
+                <Chip tone={p.configured ? 'green' : 'neutral'} pill>{p.configured ? t('Saved', 'محفوظ') : t('No key', 'بدون مفتاح')}</Chip>
               </div>
-              <Chip tone={p.configured ? 'green' : 'neutral'} pill>{p.configured ? t('Key saved', 'المفتاح محفوظ') : t('No key', 'بدون مفتاح')}</Chip>
               <div className="o-llm-key">
                 <input className="o-input" style={{ height: 34, flex: 1, minWidth: 0 }} type="password" value={keys[p.id] || ''} onChange={(e) => setKeys({ ...keys, [p.id]: e.target.value })} placeholder={p.configured ? t('(stored · paste to replace)', '(محفوظ · الصق للاستبدال)') : 'API key'} />
                 <Btn size="sm" disabled={!!busy || !(keys[p.id] || '').trim()} onClick={() => act(p.id, async () => { await invoke('llm_set_key', { provider: p.id, key: keys[p.id] }); setKeys({ ...keys, [p.id]: '' }); return t(`${p.name} key saved to the credential store`, `تم حفظ مفتاح ${p.name} في مخزن الاعتماد`); })}>{t('Save', 'حفظ')}</Btn>
                 {p.configured && <Btn size="sm" variant="secondary" disabled={!!busy} onClick={() => act(p.id + '-test', async () => { const r = await invoke<string>('llm_test', { provider: p.id }); return `${p.name}: ${r}`; })}>{busy === p.id + '-test' ? '…' : t('Test', 'اختبار')}</Btn>}
-                {p.configured && <Btn size="sm" variant="ghost" disabled={!!busy} onClick={() => act(p.id + '-rm', async () => { await invoke('llm_set_key', { provider: p.id, key: '' }); return t('Key removed', 'تمت إزالة المفتاح'); })}>{t('Remove', 'إزالة')}</Btn>}
+                {p.configured && <button className="o-more" aria-label="Remove" disabled={!!busy} onClick={() => act(p.id + '-rm', async () => { await invoke('llm_set_key', { provider: p.id, key: '' }); return t('Key removed', 'تمت إزالة المفتاح'); })}><Trash2 size={14} /></button>}
               </div>
-              <label className="o-flex" style={{ width: '100%', fontSize: 11, color: 'var(--muted)' }} title={t('Requests per minute the app will not exceed for this provider. Background drafting paces itself to this and backs off on 429.', 'عدد الطلبات في الدقيقة الذي لن يتجاوزه التطبيق لهذا المزوّد. الصياغة الخلفية تلتزم به وتتراجع عند 429.')}>{t('Rate limit', 'حد الاستخدام')}<input className="o-input" aria-label="Requests per minute" type="number" min={1} max={600} defaultValue={p.rpm} style={{ height: 30, width: 76 }} onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== p.rpm) void act(p.id + '-rpm', async () => { await invoke('llm_set_rate_limit', { provider: p.id, rpm: v }); return t(`${p.name}: ${v} requests/min`, `${p.name}: ${v} طلب/دقيقة`); }); }} /> {t('req/min', 'طلب/دقيقة')} <span className="o-muted">({t('default', 'الافتراضي')} {p.default_rpm})</span></label>
+              <div className="o-llm-foot">
+                <a href={p.docs} target="_blank" rel="noreferrer">{t('Get API key', 'احصل على مفتاح')}</a>
+                <span className="o-flex" title={t('Requests per minute the app will not exceed. Background drafting paces to this and backs off on 429.', 'عدد الطلبات في الدقيقة الذي لن يتجاوزه التطبيق.')}>{t('Limit', 'الحد')} <input className="o-input" aria-label="Requests per minute" type="number" min={1} max={600} defaultValue={p.rpm} style={{ height: 28, width: 58 }} onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== p.rpm) void act(p.id + '-rpm', async () => { await invoke('llm_set_rate_limit', { provider: p.id, rpm: v }); return t(`${p.name}: ${v}/min`, `${p.name}: ${v}/دقيقة`); }); }} /> /min</span>
+              </div>
             </Card>
           );
         })}
@@ -723,9 +728,9 @@ function LeadFinder({ t, mode = 'leads', openRunId, onOpened, onOutreach }: { t:
             </div>
           </>
         )}
-        {history.length > 0 && (
-          <div className="o-history">
-            <div className="o-between"><b><History size={14} /> {t('Saved runs', 'عمليات محفوظة')}</b><span className="o-muted" style={{ fontSize: 11 }}>{history.length}</span></div>
+        <div className="o-history">
+          <div className="o-between"><b><History size={14} /> {t('Saved runs', 'عمليات محفوظة')}</b><span className="o-muted" style={{ fontSize: 11 }}>{history.length ? `${history.length} ${t('saved', 'محفوظة')}` : t('auto-saved when a run finishes', 'تُحفظ تلقائياً عند انتهاء العملية')}</span></div>
+          {history.length ? (
             <div className="o-history-list">
               {history.slice(0, 8).map((r) => (
                 <button key={r.id} className={`o-history-item${r.id === runId ? ' active' : ''}`} onClick={() => openRun(r.id)}>
@@ -734,8 +739,8 @@ function LeadFinder({ t, mode = 'leads', openRunId, onOpened, onOutreach }: { t:
                 </button>
               ))}
             </div>
-          </div>
-        )}
+          ) : <p className="o-note" style={{ marginTop: 6 }}>{t('Your past runs will appear here to reopen. Nothing saved yet for this module.', 'ستظهر عملياتك السابقة هنا لإعادة فتحها. لا يوجد محفوظ بعد لهذه الوحدة.')}</p>}
+        </div>
         <p className="o-note">{t('Every row comes from Agent Reach (Exa) with its source URL and fetch time. Emails are only those the company itself publishes on its profile or website, tagged with the page they came from. Personal mailboxes are never collected.', 'كل صف يأتي من Agent Reach (Exa) مع رابط المصدر ووقت الجلب. الإيميلات هي فقط ما تنشره الشركة نفسها على ملفها أو موقعها، مع الصفحة المصدر. لا تُجمع صناديق بريد شخصية أبداً.')}</p>
       </Card>
       {selected && <LeadCard t={t} lead={selected} onClose={() => setSelected(null)} onOutreach={onOutreach ? (l) => { onOutreach([l]); setSelected(null); } : undefined} />}
@@ -1226,7 +1231,7 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
                     {draftRef && body !== draftRef && <Chip tone="green">{t('Your edits will be learned', 'تعديلاتك ستُتعلَّم')}</Chip>}
                   </div>
                   <input className="o-input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={t('Subject', 'الموضوع')} />
-                  <textarea className="o-input o-composer-body" rows={7} value={body} onChange={(e) => setBody(e.target.value)} placeholder={t('Write or generate the email…', 'اكتب الرسالة أو ولّدها…')} />
+                  <textarea className="o-input o-composer-body" rows={5} value={body} onChange={(e) => setBody(e.target.value)} placeholder={t('Write or generate the email…', 'اكتب الرسالة أو ولّدها…')} />
                   <div className="o-between">
                     <small className="o-muted">{t('Sending is always your click. Personal writing is learned locally.', 'الإرسال دائماً بضغطتك. أسلوبك يُتعلَّم محلياً.')}</small>
                     <Btn icon={Send} onClick={() => send(thread)} disabled={!!busy || !subject.trim() || !body.trim()}>{busy === 'send' ? t('Sending…', 'جاري الإرسال…') : t('Send', 'إرسال')}</Btn>
@@ -1853,5 +1858,59 @@ function QuotaCard({ t }: { t: T }) {
         <span className="o-note" style={{ margin: 0 }}>{t('LLM requests per minute are set per provider under AI Agents.', 'طلبات النماذج في الدقيقة تُضبط لكل مزوّد تحت وكلاء الذكاء الاصطناعي.')}</span>
       </div>
     </Card>
+  );
+}
+
+/** CRM: every outreach contact as a record, with pipeline stage, engagement and drill-in to the identity card. */
+function CrmPage({ t, go }: { t: T; go: (i: number) => void }) {
+  const [st, setSt] = useState<OState | null>(null);
+  const [q, setQ] = useState('');
+  const [stage, setStage] = useState<'all' | 'new' | 'contacted' | 'replied' | 'closed'>('all');
+  const [sel, setSel] = useState<Lead | null>(null);
+  /* oxlint-disable react/react-compiler -- load once */
+  useEffect(() => { void invoke<OState>('outreach_state').then(setSt).catch(() => undefined); }, []);
+  /* oxlint-enable react/react-compiler */
+  const stageOf = (x: OThread): 'new' | 'contacted' | 'replied' | 'closed' => x.status === 'replied' ? 'replied' : x.status === 'closed' ? 'closed' : x.messages.some((m) => m.direction === 'out') ? 'contacted' : 'new';
+  const threads = st?.threads || [];
+  const rows = threads.filter((x) => {
+    if (q && !`${x.name} ${x.company || ''} ${x.email}`.toLowerCase().includes(q.toLowerCase())) return false;
+    if (stage !== 'all' && stageOf(x) !== stage) return false;
+    return true;
+  }).sort((a2, b) => (b.last_activity || '').localeCompare(a2.last_activity || ''));
+  const count = (s: string) => threads.filter((x) => stageOf(x) === s).length;
+  const stages = [['all', t('All', 'الكل'), threads.length], ['new', t('New', 'جديد'), count('new')], ['contacted', t('Contacted', 'تم التواصل'), count('contacted')], ['replied', t('Replied', 'ردّوا'), count('replied')], ['closed', t('Closed', 'مغلق'), count('closed')]] as const;
+  const stageTone: Record<string, Tone> = { new: 'neutral', contacted: 'violet', replied: 'green', closed: 'coral' };
+  return (
+    <>
+      <PageHead eyebrow={t('Contacts from your outreach', 'جهات الاتصال من تواصلك')} title={t('CRM', 'إدارة العملاء')} spark={false} sub={t('Every contact you add to Outreach is a CRM record here, with its stage, engagement and full identity card.', 'كل جهة اتصال تضيفها إلى التواصل تصبح سجلاً هنا، بمرحلتها وتفاعلها وبطاقة هويتها الكاملة.')} actions={<Btn icon={Users} onClick={() => go(TAB.leads)}>{t('Find more leads', 'ابحث عن عملاء')}</Btn>} />
+      <div className="o-grid o-grid-4">
+        <StatCard icon={Users} label={t('Total contacts', 'إجمالي جهات الاتصال')} value={threads.length.toLocaleString()} trend={null} tone="violet" />
+        <StatCard icon={Send} label={t('Contacted', 'تم التواصل')} value={String(count('contacted') + count('replied') + count('closed'))} trend={null} tone="sky" />
+        <StatCard icon={MessageSquare} label={t('Replied', 'ردّوا')} value={String(count('replied'))} trend={null} tone="green" />
+        <StatCard icon={Mail} label={t('With email', 'لديهم إيميل')} value={String(threads.filter((x) => x.email).length)} trend={null} tone="orange" />
+      </div>
+      <Card>
+        <div className="o-between" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+          <div className="o-search" style={{ width: 280 }}><Search size={16} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('Search contacts…', 'ابحث في جهات الاتصال…')} /></div>
+          <div className="o-flex" style={{ flexWrap: 'wrap' }}>{stages.map(([k, label, n]) => <button key={k} className={`o-chip ${stage === k ? 'violet' : 'neutral'} pill`} onClick={() => setStage(k as typeof stage)}>{label} {n}</button>)}</div>
+        </div>
+        {rows.length ? (
+          <Table columns={[t('Contact', 'جهة الاتصال'), t('Company', 'الشركة'), t('Stage', 'المرحلة'), t('Sent', 'مُرسل'), t('Replies', 'ردود'), t('Last activity', 'آخر نشاط'), '']}>
+            {rows.map((x) => (
+              <tr key={x.id} className="o-row-click" onClick={() => x.lead ? setSel(x.lead) : go(TAB.outreach)}>
+                <td><div className="o-company"><Avatar text={(x.name || x.email).split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()} />{x.name || '—'}</div>{x.lead_id ? <><br /><span className="o-id" style={{ marginInlineStart: 39 }}>{x.lead_id}</span></> : null}</td>
+                <td>{x.company || '—'}<br /><small className="o-muted">{x.email}</small></td>
+                <td><Chip tone={stageTone[stageOf(x)]}>{stageOf(x) === 'new' ? t('New', 'جديد') : stageOf(x) === 'contacted' ? t('Contacted', 'تم التواصل') : stageOf(x) === 'replied' ? t('Replied', 'ردّوا') : t('Closed', 'مغلق')}</Chip></td>
+                <td>{x.messages.filter((m) => m.direction === 'out').length}</td>
+                <td>{x.messages.filter((m) => m.direction === 'in').length}</td>
+                <td>{x.last_activity ? new Date(x.last_activity).toLocaleDateString() : '—'}</td>
+                <td><MoreBtn /></td>
+              </tr>
+            ))}
+          </Table>
+        ) : threads.length ? <EmptyState icon={Search} title={t('No matches', 'لا نتائج')} text={t('Try another search or stage filter.', 'جرّب بحثاً أو مرحلة أخرى.')} /> : <EmptyState icon={Users} title={t('No contacts yet', 'لا توجد جهات اتصال بعد')} text={t('Add leads with emails to Outreach and they appear here as CRM records.', 'أضف عملاء لديهم إيميلات إلى التواصل وسيظهرون هنا كسجلات CRM.')} action={<Btn size="sm" onClick={() => go(TAB.leads)}>{t('Find leads', 'ابحث عن عملاء')}</Btn>} />}
+      </Card>
+      {sel && <LeadCard t={t} lead={sel} onClose={() => setSel(null)} onOutreach={() => go(TAB.outreach)} />}
+    </>
   );
 }
