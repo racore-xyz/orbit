@@ -27,3 +27,11 @@ native-tls = "0.2"
 mailparse = "0.15"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
+
+# Lower-memory release codegen: split the crate into many small units so LLVM's
+# peak memory stays well under a couple of GB on constrained machines (avoids
+# rustc-LLVM out-of-memory during `tauri build`). opt-level 2 keeps it fast.
+[profile.release]
+opt-level = 2
+codegen-units = 256
+lto = false
