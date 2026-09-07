@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.orbit.growth",
   "build": {
+    "beforeDevCommand": "npm run desktop:dev",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run desktop:build",
     "frontendDist": "../desktop-dist"
   },
