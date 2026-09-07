@@ -381,6 +381,14 @@ fn outreach_autodraft_start(app: tauri::AppHandle, job_id: String, limit: Option
   std::thread::spawn(move || { outreach::autodraft_job(app, job_id.clone(), lim, flag); let _ = job_flags().lock().map(|mut m| m.remove(&job_id)); });
   Ok(())
 }
+/// Send (or draft) every due follow-up in the background. Progress on `jobs://<job_id>`.
+#[tauri::command]
+fn outreach_run_followups(app: tauri::AppHandle, job_id: String) -> Result<(), String> {
+  let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+  job_flags().lock().map_err(|e| e.to_string())?.insert(job_id.clone(), flag.clone());
+  std::thread::spawn(move || { outreach::run_followups_job(app, job_id.clone(), flag); let _ = job_flags().lock().map(|mut m| m.remove(&job_id)); });
+  Ok(())
+}
 #[tauri::command]
 fn outreach_campaign_run(app: tauri::AppHandle, job_id: String, campaign_id: String) -> Result<(), String> {
   let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -472,7 +480,27 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand, jobs_resume_improve, jobs_save_download, jobs_analyze])
+    .setup(|app| {
+      // Background scheduler: independent of any open page, so follow-ups fire even when the
+      // user is on another tab or never opens Outreach. Every ~10 min it pulls replies (so we
+      // never follow up someone who answered) and, when auto follow-up is on, sends the due ones.
+      let handle = app.handle().clone();
+      std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(25));
+        loop {
+          let _ = outreach::sync_replies(Some(handle.clone()));
+          let st = outreach::load();
+          if st.settings.auto_followup && !outreach::due(&st).is_empty() {
+            let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            outreach::run_followups_job(handle.clone(), format!("auto-fu-{ts}"), flag);
+          }
+          std::thread::sleep(std::time::Duration::from_secs(600));
+        }
+      });
+      Ok(())
+    })
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_run_followups, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand, jobs_resume_improve, jobs_save_download, jobs_analyze])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

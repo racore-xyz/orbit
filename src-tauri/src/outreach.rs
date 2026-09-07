@@ -542,6 +542,52 @@ pub fn autodraft_job(app: tauri::AppHandle, job_id: String, limit: usize, cancel
   let _ = app.emit(&topic, serde_json::json!({ "type": "done", "done": done, "failed": failed, "total": total, "percent": 100 }));
 }
 
+/// Process every thread whose follow-up is due: draft the next step and either send it
+/// (when auto_followup is on) or queue it as a pending draft for approval. Progress on `jobs://<job_id>`.
+pub fn run_followups_job(app: tauri::AppHandle, job_id: String, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+  use tauri::Emitter;
+  let topic = format!("jobs://{job_id}");
+  let st = load();
+  let auto = st.settings.auto_followup;
+  let targets = due(&st);
+  let total = targets.len();
+  let _ = app.emit(&topic, serde_json::json!({ "type": "start", "job": "followups", "total": total, "auto": auto, "percent": 0 }));
+  let (mut sent, mut drafted, mut failed) = (0usize, 0usize, 0usize);
+  let mut last_err = String::new();
+  for (i, id) in targets.iter().enumerate() {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) { let _ = app.emit(&topic, serde_json::json!({ "type": "cancelled", "sent": sent, "drafted": drafted, "total": total })); return; }
+    let (name, step) = { let s = load(); match s.threads.iter().find(|t| &t.id == id) { Some(t) => (t.name.clone(), t.followup_count + 1), None => continue } };
+    let _ = app.emit(&topic, serde_json::json!({ "type": "progress", "index": i + 1, "total": total, "label": name, "percent": (i * 100 / total.max(1)) }));
+    match draft(id.clone(), step, None) {
+      Ok(d) => {
+        let subject = d["subject"].as_str().unwrap_or("").to_string();
+        let body = d["body"].as_str().unwrap_or("").to_string();
+        if subject.trim().is_empty() || body.trim().is_empty() { failed += 1; last_err = "empty draft".into(); continue; }
+        if auto {
+          match send(id.clone(), subject, body, step, None, None) {
+            Ok(_) => { sent += 1; let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": true, "action": "sent", "percent": ((i + 1) * 100 / total.max(1)) })); }
+            Err(e) => { failed += 1; last_err = e.clone(); let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": false, "error": e, "percent": ((i + 1) * 100 / total.max(1)) })); if e.to_lowercase().contains("daily") || e.contains("kill switch") || e.contains("No mailbox") || e.contains("mailbox") { break; } }
+          }
+        } else {
+          let mut s2 = load();
+          if let Some(t) = s2.threads.iter_mut().find(|t| &t.id == id) { t.pending_draft = Some(PendingDraft { subject, body, step, at: integrations::now_iso(), source: "followup".into() }); }
+          let _ = save(s2);
+          drafted += 1;
+          let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": true, "action": "drafted", "percent": ((i + 1) * 100 / total.max(1)) }));
+        }
+      }
+      Err(e) => { failed += 1; last_err = e.clone(); let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": false, "error": e, "percent": ((i + 1) * 100 / total.max(1)) })); if e.contains("No API key") || e.contains("No LLM provider") { break; } }
+    }
+  }
+  let title = if auto { format!("{sent} follow-ups sent") } else { format!("{drafted} follow-ups drafted") };
+  let text = if failed > 0 { format!("{} · {failed} failed (last: {last_err})", if auto { format!("{sent} sent") } else { format!("{drafted} ready to approve in Outreach") }) }
+    else if auto { format!("{sent} due follow-ups sent automatically.") }
+    else { format!("{drafted} due follow-ups drafted — approve them in Outreach.") };
+  let _ = crate::workspace::notify(Some(&app), "followup", &title, &text, Some("outreach"));
+  let _ = crate::workspace::log("outreach".into(), format!("Follow-ups run: {sent} sent, {drafted} drafted, {failed} failed"));
+  let _ = app.emit(&topic, serde_json::json!({ "type": "done", "sent": sent, "drafted": drafted, "failed": failed, "total": total, "percent": 100 }));
+}
+
 /// Dashboard data computed from the real stores (last 30 days vs the 30 before).
 pub fn dashboard() -> serde_json::Value {
   let st = load();
