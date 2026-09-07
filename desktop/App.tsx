@@ -2342,29 +2342,41 @@ function WorldDemandMap({ demand }: { demand: { country: string; count: number; 
   const remote = demand.find((d) => d.country === 'Remote')?.count || 0;
   const unknown = demand.find((d) => d.country === 'Unknown')?.count || 0;
   const color = (n: number) => { const x = n / max; return x > 0.66 ? 'var(--coral)' : x > 0.33 ? 'var(--orange)' : 'var(--violet)'; };
+  const total = demand.reduce((n, d) => n + d.count, 0);
+  const ranked = [...pts].sort((a, b) => b.count - a.count);
   return (
-    <div className="o-worldmap">
-      <svg viewBox={`0 0 ${WM_W} ${WM_H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="World hiring demand map">
-        <rect width={WM_W} height={WM_H} rx="14" fill="var(--surface-2)" stroke="var(--line)" />
-        {WM_LAND.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={2.3} fill="var(--muted-2)" opacity={0.32} />)}
-        {pts.map((d) => {
-          const [x, y] = wmProj(d.lon, d.lat); const r = 10 + (d.count / max) * 30;
-          return (
-            <g key={d.country}>
-              <circle cx={x} cy={y} r={r} fill={color(d.count)} fillOpacity="0.82" stroke="#fff" strokeWidth="2" />
-              <text x={x} y={y + 4} textAnchor="middle" fontSize="13" fontWeight="800" fill="#fff">{d.count}</text>
-              <text x={x} y={y + r + 15} textAnchor="middle" fontSize="12" fontWeight="600" fill="var(--text)">{d.country}</text>
-            </g>
-          );
-        })}
-      </svg>
-      {(remote > 0 || unknown > 0 || pts.length === 0) && (
-        <div className="o-worldmap-legend">
-          {remote > 0 && <span className="o-chip o-chip-green">🌍 {remote} Remote</span>}
-          {unknown > 0 && <span className="o-chip">📍 {unknown} location not specified</span>}
-          {pts.length === 0 && remote === 0 && unknown === 0 && <span className="o-muted">No location data for this search yet.</span>}
-        </div>
-      )}
+    <div className="o-worldmap-wrap">
+      <div className="o-worldmap">
+        <svg viewBox={`0 0 ${WM_W} ${WM_H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="World hiring demand map">
+          <rect width={WM_W} height={WM_H} rx="14" fill="var(--surface-2)" stroke="var(--line)" />
+          {WM_LAND.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={2.3} fill="var(--muted-2)" opacity={0.32} />)}
+          {ranked.map((d) => {
+            const [x, y] = wmProj(d.lon, d.lat); const r = 8 + (d.count / max) * 22;
+            return (
+              <g key={d.country}>
+                <title>{`${d.country}: ${d.count}`}</title>
+                <circle cx={x} cy={y} r={r} fill={color(d.count)} fillOpacity="0.8" stroke="#fff" strokeWidth="2" />
+                <text x={x} y={y + 4} textAnchor="middle" fontSize="12" fontWeight="800" fill="#fff">{d.count}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="o-demand-list">
+        <div className="o-demand-head">{ranked.length ? t('By location', 'حسب الموقع') : t('Locations', 'المواقع')}</div>
+        {ranked.map((d) => (
+          <div className="o-demand-row" key={d.country} title={`${d.country}: ${d.count}`}>
+            <span className="o-demand-dot" style={{ background: color(d.count) }} />
+            <span className="o-demand-name">{d.country}</span>
+            <span className="o-demand-bar"><i style={{ width: `${Math.max(6, (d.count / max) * 100)}%`, background: color(d.count) }} /></span>
+            <b className="o-demand-count">{d.count}</b>
+          </div>
+        ))}
+        {remote > 0 && <div className="o-demand-row"><span className="o-demand-dot" style={{ background: 'var(--green)' }} /><span className="o-demand-name">🌍 {t('Remote', 'عن بُعد')}</span><span className="o-demand-bar"><i style={{ width: `${Math.max(6, (remote / max) * 100)}%`, background: 'var(--green)' }} /></span><b className="o-demand-count">{remote}</b></div>}
+        {unknown > 0 && <div className="o-demand-row muted"><span className="o-demand-dot" style={{ background: 'var(--muted-2)' }} /><span className="o-demand-name">📍 {t('Not specified', 'غير محدّد')}</span><span className="o-demand-bar" /><b className="o-demand-count">{unknown}</b></div>}
+        {ranked.length === 0 && remote === 0 && unknown === 0 && <div className="o-muted" style={{ fontSize: 12, padding: 8 }}>{t('No location data for this search yet.', 'لا توجد بيانات مواقع لهذا البحث بعد.')}</div>}
+        {total > 0 && <div className="o-demand-foot">{t(`${total} postings`, `${total} إعلان`)}</div>}
+      </div>
     </div>
   );
 }

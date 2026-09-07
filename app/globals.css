@@ -736,11 +736,20 @@ label.o-row:hover { background: var(--surface-2); }
 .o-mode-card.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--ring); }
 .o-mode-card b { font-size: 15px; }
 .o-mode-card span { font-size: 12px; color: var(--muted); line-height: 1.5; }
-.o-worldmap { width: 100%; }
+.o-worldmap-wrap { display: flex; gap: 16px; align-items: stretch; }
+.o-worldmap { flex: 1 1 auto; min-width: 0; }
 .o-worldmap svg { width: 100%; height: auto; display: block; }
-.o-worldmap-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
-.o-worldmap-legend .o-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: var(--radius-pill); background: var(--surface-3); color: var(--text-2); }
-.o-worldmap-legend .o-chip-green { background: var(--green-soft); color: var(--green); }
+.o-demand-list { flex: 0 0 232px; display: flex; flex-direction: column; gap: 2px; border-inline-start: 1px solid var(--line); padding-inline-start: 16px; overflow: auto; max-height: 480px; }
+.o-demand-head { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted-2); font-weight: 700; margin-bottom: 6px; }
+.o-demand-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
+.o-demand-row.muted { color: var(--muted); }
+.o-demand-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.o-demand-name { flex: 0 0 auto; max-width: 96px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.o-demand-bar { flex: 1 1 auto; height: 6px; background: var(--surface-3); border-radius: var(--radius-pill); overflow: hidden; }
+.o-demand-bar i { display: block; height: 100%; border-radius: var(--radius-pill); }
+.o-demand-count { flex: 0 0 auto; font-weight: 800; min-width: 20px; text-align: end; }
+.o-demand-foot { margin-top: auto; padding-top: 10px; font-size: 11px; color: var(--muted); font-weight: 600; }
+@media (max-width: 780px) { .o-worldmap-wrap { flex-direction: column; } .o-demand-list { flex-basis: auto; border-inline-start: 0; padding-inline-start: 0; border-top: 1px solid var(--line); padding-top: 12px; max-height: none; } }
 /* Résumé live rewrite + diff */
 .o-seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
 .o-seg button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface); }
