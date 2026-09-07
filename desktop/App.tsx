@@ -2449,9 +2449,14 @@ function WorldDemandMap({ t, demand }: { t: T; demand: { country: string; count:
   );
 }
 
+const LOGO_TONES = ['#6358E8', '#4E9BE9', '#32AD70', '#EB9944', '#EC7560', '#8B5CF6'];
 function JobLogo({ job }: { job: JJob }) {
-  const [ok, setOk] = useState(true);
-  return <div className="o-joblogo">{job.logo && ok ? <img src={job.logo} alt="" loading="lazy" onError={() => setOk(false)} /> : <span>{(job.company || job.role || '?')[0]?.toUpperCase()}</span>}</div>;
+  // Local initial-avatar (no network): reliable in the WebView, one per company/board, colored deterministically.
+  const label = (job.company || job.source || job.role || '?').trim();
+  const ch = (label.replace(/^https?:\/\/(www\.)?/, '')[0] || '?').toUpperCase();
+  let h = 0; for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
+  const bg = LOGO_TONES[h % LOGO_TONES.length];
+  return <div className="o-joblogo" style={{ background: bg }} title={job.company || job.source}><span>{ch}</span></div>;
 }
 
 /* oxlint-disable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-static-element-interactions -- backdrop click + Escape close the dialog */
