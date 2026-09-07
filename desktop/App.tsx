@@ -2449,6 +2449,11 @@ function WorldDemandMap({ t, demand }: { t: T; demand: { country: string; count:
   );
 }
 
+function JobLogo({ job }: { job: JJob }) {
+  const [ok, setOk] = useState(true);
+  return <div className="o-joblogo">{job.logo && ok ? <img src={job.logo} alt="" loading="lazy" onError={() => setOk(false)} /> : <span>{(job.company || job.role || '?')[0]?.toUpperCase()}</span>}</div>;
+}
+
 /* oxlint-disable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-static-element-interactions -- backdrop click + Escape close the dialog */
 function JobCard({ t, job, onClose, onAdd, added }: { t: T; job: JJob; onClose: () => void; onAdd?: (j: JJob) => void; added?: boolean }) {
   const [analysis, setAnalysis] = useState('');
@@ -2578,13 +2583,15 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
       {jobs.length > 0 && (
         <Card>
           <CardHead title={t(`${shown.length} of ${jobs.length} jobs`, `${shown.length} من ${jobs.length} وظيفة`)} action={<div className="o-flex"><select className="o-input" aria-label="Country" style={{ height: 32 }} value={fCountry} onChange={(e) => setFCountry(e.target.value)}><option value="all">{t('All countries', 'كل الدول')}</option>{countries.map((c) => <option key={c} value={c}>{c}</option>)}</select><select className="o-input" aria-label="Source" style={{ height: 32 }} value={fSource} onChange={(e) => setFSource(e.target.value)}><option value="all">{t('All sources', 'كل المصادر')}</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>} />
-          <Table columns={[t('Role', 'الوظيفة'), t('Company', 'الشركة'), t('Location', 'الموقع'), t('Type', 'النوع'), t('Source', 'المصدر'), '']}>
+          <Table columns={['', t('Role', 'الوظيفة'), t('Company', 'الشركة'), t('Location', 'الموقع'), t('Work mode', 'نمط العمل'), t('Salary', 'الراتب'), t('Source', 'المصدر'), '']}>
             {shown.slice(0, 200).map((j) => (
               <tr key={j.url} className="o-clickrow" onClick={() => setSelected(j)}>
-                <td style={{ whiteSpace: 'normal', maxWidth: 320 }}><b className="o-link">{j.role || j.title}</b></td>
+                <td style={{ width: 34, paddingInlineEnd: 0 }}><JobLogo job={j} /></td>
+                <td style={{ whiteSpace: 'normal', maxWidth: 300 }}><b className="o-link">{j.role || j.title}</b></td>
                 <td>{j.company || '—'}</td>
                 <td>{j.location || j.country}</td>
-                <td>{[j.work_mode, j.employment_type].filter(Boolean).join(' · ') || '—'}</td>
+                <td>{j.work_mode || j.employment_type ? <div className="o-flex" style={{ gap: 4, flexWrap: 'wrap' }}>{j.work_mode && <Chip tone={j.work_mode === 'Remote' ? 'green' : 'sky'}>{j.work_mode}</Chip>}{j.employment_type && <Chip tone="neutral">{j.employment_type}</Chip>}</div> : '—'}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{j.salary || '—'}</td>
                 <td>{j.source}</td>
                 <td onClick={(e) => e.stopPropagation()}>{added.has(j.id) ? <Chip tone="green">{t('Added', 'مضاف')}</Chip> : <Btn size="sm" variant="secondary" onClick={() => addToPipeline(j)}>{t('Add', 'إضافة')}</Btn>}</td>
               </tr>
