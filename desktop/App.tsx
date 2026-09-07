@@ -2451,11 +2451,13 @@ function WorldDemandMap({ t, demand }: { t: T; demand: { country: string; count:
 
 const LOGO_TONES = ['#6358E8', '#4E9BE9', '#32AD70', '#EB9944', '#EC7560', '#8B5CF6'];
 function JobLogo({ job }: { job: JJob }) {
-  // Local initial-avatar (no network): reliable in the WebView, one per company/board, colored deterministically.
+  const [failed, setFailed] = useState(false);
   const label = (job.company || job.source || job.role || '?').trim();
   const ch = (label.replace(/^https?:\/\/(www\.)?/, '')[0] || '?').toUpperCase();
   let h = 0; for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
   const bg = LOGO_TONES[h % LOGO_TONES.length];
+  // Show the real site/company logo; fall back to a colored initial if it can't load (WebView-safe).
+  if (job.logo && !failed) return <div className="o-joblogo" title={job.company || job.source}><img src={job.logo} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} /></div>;
   return <div className="o-joblogo" style={{ background: bg }} title={job.company || job.source}><span>{ch}</span></div>;
 }
 
@@ -2588,6 +2590,7 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
       {jobs.length > 0 && (
         <Card>
           <CardHead title={t(`${shown.length} of ${jobs.length} jobs`, `${shown.length} من ${jobs.length} وظيفة`)} action={<div className="o-flex"><select className="o-input" aria-label="Country" style={{ height: 32 }} value={fCountry} onChange={(e) => setFCountry(e.target.value)}><option value="all">{t('All countries', 'كل الدول')}</option>{countries.map((c) => <option key={c} value={c}>{c}</option>)}</select><select className="o-input" aria-label="Source" style={{ height: 32 }} value={fSource} onChange={(e) => setFSource(e.target.value)}><option value="all">{t('All sources', 'كل المصادر')}</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>} />
+          <div className="o-jobs-table">
           <Table columns={['', t('Role', 'الوظيفة'), t('Company', 'الشركة'), t('Location', 'الموقع'), t('Work mode', 'نمط العمل'), t('Salary', 'الراتب'), t('Source', 'المصدر'), '']}>
             {shown.slice(0, 200).map((j) => (
               <tr key={j.url} className="o-clickrow" onClick={() => setSelected(j)}>
@@ -2602,6 +2605,7 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
               </tr>
             ))}
           </Table>
+          </div>
         </Card>
       )}
       <Card>
