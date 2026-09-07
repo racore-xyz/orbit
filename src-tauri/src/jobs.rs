@@ -184,6 +184,17 @@ pub fn improve_job(app: tauri::AppHandle, job_id: String, resume: String, target
   }
 }
 
+/// Extract a clean, structured breakdown of one job posting (overview, responsibilities,
+/// requirements, benefits, details) as Markdown, from its title/company/snippet.
+pub fn analyze(title: String, company: String, snippet: String) -> Result<String, String> {
+  if snippet.trim().len() < 20 && title.trim().is_empty() { return Err("Not enough text to analyze this posting.".into()); }
+  let ws = crate::workspace::load().profile;
+  let lang = if ws.language == "ar" { "Arabic" } else { "English" };
+  let system = format!("You extract a clean, structured summary of a job posting into Markdown, in {lang}. From the title and posting text, output these sections using '## ' headings, and OMIT any section you genuinely cannot infer from the text: Overview (1-2 lines), Responsibilities (bullets), Requirements (bullets), Nice to have (bullets), Benefits (bullets), Details (a bullet list covering Employment type, Work mode, Seniority, Salary, and Location when present). Stay faithful to the text — never invent a salary or benefits that are not stated or clearly implied. Be concise.");
+  let user = format!("TITLE: {title}\nCOMPANY: {company}\n\nPOSTING TEXT:\n{snippet}");
+  crate::llm::complete(None, None, system, user, 900)
+}
+
 /// Write bytes (e.g. a generated .docx) to the user's Downloads folder and open them, returning the path.
 pub fn save_download(app: &tauri::AppHandle, name: String, bytes: Vec<u8>) -> Result<String, String> {
   let base = std::env::var("USERPROFILE").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());

@@ -70,7 +70,7 @@ export default function DesktopApp() {
   const unread = ws?.workspace.notifications?.filter((n) => !n.read).length || 0;
   const [guideHidden, setGuideHidden] = useState(false);
   const endDemo = async () => { try { await invoke('workspace_demo_clear'); } finally { setGuideHidden(true); setGuideStep(0); setTab(TAB.dashboard); await reloadWs(); } };
-  const openSavedRun = (id: string, mode: string) => { setOpenRun(id); setTab(mode === 'research' ? TAB.research : mode === 'reddit' ? TAB.social : TAB.leads); };
+  const openSavedRun = (id: string, mode: string) => { setOpenRun(id); if (mode === 'jobs') setTab(2 /* JT.find */); else setTab(mode === 'research' ? TAB.research : mode === 'reddit' ? TAB.social : TAB.leads); };
   const [outreachSeed, setOutreachSeed] = useState<Lead[] | null>(null);
   const sendToOutreach = (leads: Lead[]) => { setOutreachSeed(leads); setTab(TAB.outreach); };
   const [agentic, setAgentic] = useState(() => localStorage.getItem('orbit.agenticMode') !== 'off');
@@ -160,7 +160,7 @@ export default function DesktopApp() {
       </>)}
       {jobsMode && tab === JT.dashboard && <JobsDashboard t={t} ws={ws} go={setTab} />}
       {jobsMode && tab === JT.resume && <ResumePage t={t} ws={ws} reload={reloadWs} />}
-      {jobsMode && tab === JT.find && <JobFinder t={t} />}
+      {jobsMode && tab === JT.find && <JobFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} />}
       {jobsMode && tab === JT.applications && <ApplicationsPage t={t} ws={ws} />}
       {jobsMode && tab === JT.map && <JobMapPage t={t} />}
       {jobsMode && tab === JT.agents && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
@@ -2063,7 +2063,7 @@ function Mailboxes({ t, mailboxes, reload }: { t: T; mailboxes: MBox[]; reload: 
 
 type JApp = { id: string; company: string; role: string; location: string; country: string; url: string; source: string; status: string; job_desc: string; contact_email?: string | null; tailored_resume: string; cover_letter: string; applied_at?: string | null; follow_ups: { at: string; done: boolean }[]; notes: string; created_at: string };
 type JState = { applications: JApp[]; settings: { follow_up_max: number; follow_up_days: number } };
-type JJob = { id: string; title: string; role: string; company: string; location: string; country: string; url: string; source: string; snippet: string };
+type JJob = { id: string; title: string; role: string; company: string; location: string; country: string; url: string; source: string; snippet: string; employment_type?: string; work_mode?: string; seniority?: string; salary?: string; posted?: string; logo?: string };
 type JobResult = { query: string; count: number; jobs: JJob[]; demand: { country: string; count: number; lat: number; lon: number }[]; fetched_at: string };
 
 function JobsDashboard({ t, ws, go }: { t: T; ws: WsSummary | null; go: (i: number) => void }) {
@@ -2381,7 +2381,68 @@ function WorldDemandMap({ demand }: { demand: { country: string; count: number; 
   );
 }
 
-function JobFinder({ t }: { t: T }) {
+/* oxlint-disable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-static-element-interactions -- backdrop click + Escape close the dialog */
+function JobCard({ t, job, onClose, onAdd, added }: { t: T; job: JJob; onClose: () => void; onAdd?: (j: JJob) => void; added?: boolean }) {
+  const [analysis, setAnalysis] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [logoOk, setLogoOk] = useState(true);
+  useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  /* oxlint-disable react/react-compiler */
+  useEffect(() => { setAnalysis(''); setErr(''); void analyze(); }, [job.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const analyze = async () => { setBusy(true); setErr(''); try { setAnalysis(await invoke<string>('jobs_analyze', { title: job.title || job.role, company: job.company, snippet: job.snippet || '' })); } catch (e) { setErr(String(e)); } finally { setBusy(false); } };
+  const meta: [string, string | undefined][] = [
+    [t('Company', 'الشركة'), job.company || undefined],
+    [t('Location', 'الموقع'), job.location || job.country],
+    [t('Work mode', 'نمط العمل'), job.work_mode || undefined],
+    [t('Type', 'النوع'), job.employment_type || undefined],
+    [t('Seniority', 'المستوى'), job.seniority || undefined],
+    [t('Salary', 'الراتب'), job.salary || undefined],
+    [t('Posted', 'النشر'), job.posted || undefined],
+    [t('Source', 'المصدر'), job.source],
+  ];
+  return (
+    <div className="o-backdrop" onClick={onClose}>
+      <div className="o-jobcard" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={job.role}>
+        <div className="o-jobcard-head">
+          <div className="o-jobcard-logo">{job.logo && logoOk ? <img src={job.logo} alt="" onError={() => setLogoOk(false)} /> : <span>{(job.company || job.role || '?')[0]?.toUpperCase()}</span>}</div>
+          <div className="o-jobcard-titles">
+            <h2>{job.role || job.title}</h2>
+            <p>{job.company || job.source}{job.location ? ` · ${job.location}` : job.country ? ` · ${job.country}` : ''}</p>
+            <div className="o-flex" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+              <span className="o-id">{job.id}</span>
+              {job.work_mode && <Chip tone={job.work_mode === 'Remote' ? 'green' : 'sky'}>{job.work_mode}</Chip>}
+              {job.employment_type && <Chip tone="violet">{job.employment_type}</Chip>}
+              {job.seniority && <Chip tone="orange">{job.seniority}</Chip>}
+              {job.country && job.country !== 'Unknown' && <Chip tone="neutral">{job.country}</Chip>}
+            </div>
+          </div>
+          <button className="o-iconbtn o-jobcard-close" onClick={onClose} aria-label="Close"><X size={16} /></button>
+        </div>
+        <div className="o-jobcard-body">
+          <div className="o-jobcard-main">
+            <div className="o-between"><h3>{t('Breakdown', 'التفاصيل')}</h3>{busy ? <span className="o-muted" style={{ fontSize: 12 }}><span className="o-spinner" /> {t('Analysing…', 'جاري التحليل…')}</span> : <Btn variant="ghost" size="sm" icon={RefreshCw} onClick={analyze}>{t('Re-analyze', 'إعادة التحليل')}</Btn>}</div>
+            {err && <div className="o-result error">{err}</div>}
+            {analysis ? <Md text={analysis} /> : !busy && <p className="o-note">{t('AI breakdown of requirements, responsibilities and benefits will appear here.', 'سيظهر هنا تحليل الذكاء الاصطناعي للمتطلبات والمسؤوليات والمزايا.')}</p>}
+            {job.snippet && <details className="o-jobcard-raw"><summary>{t('Original posting text', 'نص الإعلان الأصلي')}</summary><p>{job.snippet}</p></details>}
+          </div>
+          <div className="o-jobcard-side">
+            <h3>{t('Details', 'المعلومات')}</h3>
+            <dl className="o-facts">{meta.filter(([, v]) => v).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+            <div className="o-jobcard-actions">
+              <a className="o-btn o-btn-secondary" href={job.url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> {t('Open posting', 'فتح الإعلان')}</a>
+              {onAdd && (added ? <Chip tone="green">{t('In pipeline', 'في القائمة')}</Chip> : <Btn icon={Send} onClick={() => onAdd(job)}>{t('Add to pipeline', 'أضف للقائمة')}</Btn>)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+/* oxlint-enable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-static-element-interactions */
+
+function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null; onOpened?: () => void }) {
   const [query, setQuery] = useState('');
   const [target, setTarget] = useState(150);
   const [busy, setBusy] = useState(false);
@@ -2392,25 +2453,40 @@ function JobFinder({ t }: { t: T }) {
   const [fCountry, setFCountry] = useState('all');
   const [fSource, setFSource] = useState('all');
   const [added, setAdded] = useState<Set<string>>(new Set());
+  const [history, setHistory] = useState<RunMeta[]>([]);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<JJob | null>(null);
   const jobRef = useRef<string | null>(null);
   const un = useRef<UnlistenFn | null>(null);
   const stop = () => { un.current?.(); un.current = null; jobRef.current = null; };
+  const loadHistory = async () => { try { const all = await invoke<RunMeta[]>('run_list'); setHistory(all.filter((r) => r.mode === 'jobs')); } catch { /* ignore */ } };
+  const openRun = async (id: string) => {
+    try {
+      const r = await invoke<{ id: string; query: string; result: JobResult; saved_at: string }>('run_get', { id });
+      setRes(r.result); setLive(r.result.jobs); setQuery(r.query); setRunId(r.id); setFCountry('all'); setFSource('all');
+      setProgress({ percent: 100, label: t(`Loaded from history · ${new Date(r.saved_at).toLocaleString()}`, `تم التحميل من السجل · ${new Date(r.saved_at).toLocaleString()}`) });
+    } catch (e) { setError(String(e)); }
+  };
   /* oxlint-disable react/react-compiler */
+  useEffect(() => { void loadHistory(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (openRunId) { void openRun(openRunId); onOpened?.(); } }, [openRunId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { if (jobRef.current) void invoke('bridge_cancel', { jobId: jobRef.current }); stop(); }, []);
   /* oxlint-enable react/react-compiler */
   const run = async () => {
     if (!query.trim()) { setError(t('Type a role, skills or title first.', 'اكتب وظيفة أو مهارات أولاً.')); return; }
-    const id = `jobs-${Date.now()}`; jobRef.current = id; setBusy(true); setError(''); setRes(null); setLive([]); setProgress({ percent: 0, label: t('Searching job boards…', 'جاري البحث في مواقع التوظيف…') });
+    const id = `jobs-${Date.now()}`; jobRef.current = id; setBusy(true); setError(''); setRes(null); setLive([]); setRunId(null); setFCountry('all'); setFSource('all'); setProgress({ percent: 0, label: t('Searching job boards…', 'جاري البحث في مواقع التوظيف…') });
     un.current = await listen<Record<string, unknown>>(`bridge://${id}`, (ev) => {
       const e = ev.payload as { type: string; percent?: number; query?: string; count?: number; new?: number; leads?: JJob[]; error?: string; fatal?: boolean; result?: JobResult };
       if (e.type === 'call') setProgress({ percent: e.percent ?? 0, label: e.query || '' });
       else if (e.type === 'batch') { setLive((l) => [...l, ...(e.leads || [])]); setProgress({ percent: e.percent ?? 0, label: t(`+${e.new} · ${e.count} jobs`, `+${e.new} · ${e.count} وظيفة`) }); }
       else if (e.type === 'error') { if (e.fatal) { setError(e.error || 'failed'); setBusy(false); stop(); } }
-      else if (e.type === 'done' && e.result) { setRes(e.result); setLive(e.result.jobs); setProgress({ percent: 100, label: t(`${e.result.count} jobs found`, `${e.result.count} وظيفة`) }); void invoke('workspace_log', { kind: 'research', text: `Job search: "${e.result.query}" → ${e.result.count} jobs` }); setBusy(false); stop(); }
+      else if (e.type === 'done' && e.result) { setRes(e.result); setLive(e.result.jobs); setRunId(id); setProgress({ percent: 100, label: t(`${e.result.count} jobs found`, `${e.result.count} وظيفة`) }); void saveRun(id, e.result); void invoke('workspace_log', { kind: 'research', text: `Job search: "${e.result.query}" → ${e.result.count} jobs` }); setBusy(false); stop(); }
       else if (e.type === 'cancelled') { setBusy(false); stop(); }
     });
     try { await invoke('jobs_search_stream', { jobId: id, query, target }); } catch (e) { setError(String(e)); setBusy(false); stop(); }
   };
+  const saveRun = async (id: string, r: JobResult) => { try { await invoke('run_save', { run: { id, mode: 'jobs', query: r.query, target, calls: [], fetched_at: r.fetched_at, leads: r.jobs, result: r, saved_at: new Date().toISOString() } }); await loadHistory(); } catch { /* ignore */ } };
+  const deleteRun = async (id: string) => { try { await invoke('run_delete', { id }); if (id === runId) { setRes(null); setLive([]); setRunId(null); } await loadHistory(); } catch { /* ignore */ } };
   const cancel = async () => { if (jobRef.current) await invoke('bridge_cancel', { jobId: jobRef.current }); };
   const addToPipeline = async (j: JJob) => { try { await invoke('jobs_application_add', { company: j.company, role: j.role, location: j.location, country: j.country, url: j.url, source: j.source, jobDesc: j.snippet, contactEmail: null }); setAdded((s) => new Set([...s, j.id])); } catch { /* dup */ setAdded((s) => new Set([...s, j.id])); } };
   const jobs = res ? res.jobs : live;
@@ -2434,19 +2510,39 @@ function JobFinder({ t }: { t: T }) {
       {jobs.length > 0 && (
         <Card>
           <CardHead title={t(`${shown.length} of ${jobs.length} jobs`, `${shown.length} من ${jobs.length} وظيفة`)} action={<div className="o-flex"><select className="o-input" aria-label="Country" style={{ height: 32 }} value={fCountry} onChange={(e) => setFCountry(e.target.value)}><option value="all">{t('All countries', 'كل الدول')}</option>{countries.map((c) => <option key={c} value={c}>{c}</option>)}</select><select className="o-input" aria-label="Source" style={{ height: 32 }} value={fSource} onChange={(e) => setFSource(e.target.value)}><option value="all">{t('All sources', 'كل المصادر')}</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>} />
-          <Table columns={[t('Role', 'الوظيفة'), t('Company', 'الشركة'), t('Location', 'الموقع'), t('Source', 'المصدر'), '']}>
+          <Table columns={[t('Role', 'الوظيفة'), t('Company', 'الشركة'), t('Location', 'الموقع'), t('Type', 'النوع'), t('Source', 'المصدر'), '']}>
             {shown.slice(0, 200).map((j) => (
-              <tr key={j.url}>
-                <td style={{ whiteSpace: 'normal', maxWidth: 340 }}><a href={j.url} target="_blank" rel="noreferrer"><b>{j.role || j.title}</b></a></td>
+              <tr key={j.url} className="o-clickrow" onClick={() => setSelected(j)}>
+                <td style={{ whiteSpace: 'normal', maxWidth: 320 }}><b className="o-link">{j.role || j.title}</b></td>
                 <td>{j.company || '—'}</td>
                 <td>{j.location || j.country}</td>
+                <td>{[j.work_mode, j.employment_type].filter(Boolean).join(' · ') || '—'}</td>
                 <td>{j.source}</td>
-                <td>{added.has(j.id) ? <Chip tone="green">{t('Added', 'مضاف')}</Chip> : <Btn size="sm" variant="secondary" onClick={() => addToPipeline(j)}>{t('Add', 'إضافة')}</Btn>}</td>
+                <td onClick={(e) => e.stopPropagation()}>{added.has(j.id) ? <Chip tone="green">{t('Added', 'مضاف')}</Chip> : <Btn size="sm" variant="secondary" onClick={() => addToPipeline(j)}>{t('Add', 'إضافة')}</Btn>}</td>
               </tr>
             ))}
           </Table>
         </Card>
       )}
+      <Card>
+        <div className="o-history">
+          <div className="o-between"><b><History size={14} /> {t('Saved searches', 'عمليات بحث محفوظة')}</b><span className="o-muted" style={{ fontSize: 11 }}>{history.length ? `${history.length} ${t('saved', 'محفوظة')}` : t('auto-saved when a search finishes', 'تُحفظ تلقائياً عند انتهاء البحث')}</span></div>
+          {history.length ? (
+            <div className="o-history-list">
+              {history.slice(0, 10).map((r) => (
+                <div key={r.id} className={`o-history-item${r.id === runId ? ' active' : ''}`} style={{ position: 'relative' }}>
+                  <button style={{ textAlign: 'start', width: '100%' }} onClick={() => openRun(r.id)}>
+                    <b>{r.query}</b>
+                    <small>{r.count} {t('jobs', 'وظيفة')} · {new Date(r.saved_at).toLocaleString()}</small>
+                  </button>
+                  <button className="o-more" aria-label={t('Delete', 'حذف')} style={{ position: 'absolute', top: 8, insetInlineEnd: 8 }} onClick={() => deleteRun(r.id)}><Trash2 size={13} /></button>
+                </div>
+              ))}
+            </div>
+          ) : <p className="o-note" style={{ marginTop: 6 }}>{t('Your past searches will appear here to reopen — same as Lead Finder and the other finders.', 'ستظهر عمليات بحثك السابقة هنا لإعادة فتحها — مثل البحث عن العملاء وباقي أدوات البحث.')}</p>}
+        </div>
+      </Card>
+      {selected && <JobCard t={t} job={selected} onClose={() => setSelected(null)} onAdd={(j) => addToPipeline(j)} added={added.has(selected.id)} />}
     </>
   );
 }

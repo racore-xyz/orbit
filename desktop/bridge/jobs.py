@@ -13,9 +13,20 @@ import re
 
 # Boards: global + Arab + Gulf. Included in the query text to bias Exa toward real postings.
 BOARDS = [
+    # global
     "site:linkedin.com/jobs", "linkedin jobs", "indeed.com", "glassdoor jobs", "wellfound jobs",
+    "ziprecruiter.com", "monster.com", "dice.com", "simplyhired.com", "themuse.com jobs",
+    "lever.co jobs", "greenhouse.io jobs", "workable.com jobs", "jobvite.com", "smartrecruiters.com",
+    # remote-first
+    "remoteok.com", "weworkremotely.com", "remote.co jobs", "remotive.com", "workingnomads.com",
+    # Europe / UK
+    "reed.co.uk", "totaljobs.com", "cv-library.co.uk", "stepstone.de", "xing.com jobs", "welcometothejungle.com",
+    # India / Asia
+    "naukri.com", "foundit.in", "instahyre.com", "jobstreet.com", "jobsdb.com", "seek.com.au",
+    # Arab + Gulf
     "bayt.com", "wuzzuf.net", "gulftalent.com", "naukrigulf.com", "tanqeeb.com", "forasna.com",
-    "laimoon.com", "dubizzle jobs", "akhtaboot.com",
+    "laimoon.com", "dubizzle jobs", "akhtaboot.com", "mihnati.com", "rozee.pk", "tan9eeb.com",
+    "hirint.com", "wadhefa.com", "khaleejtimes jobs", "gulfnews jobs", "monstergulf.com",
 ]
 # location -> country for map aggregation
 LOC_COUNTRY = {
@@ -79,10 +90,41 @@ def parse_job(hit):
         role_src = hm.group(1)
     role = re.split(r"\s+[-|]\s+", role_src)[0].strip()
     role = re.sub(r"\s+(?:at|@)\s+[A-Z].*$", "", role).strip()
+    blob = title + " " + raw
+    low = blob.lower()
+    # employment type
+    etypes = []
+    for kw, label in [("full-time", "Full-time"), ("full time", "Full-time"), ("part-time", "Part-time"), ("part time", "Part-time"),
+                      ("contract", "Contract"), ("freelance", "Freelance"), ("internship", "Internship"), ("temporary", "Temporary")]:
+        if kw in low and label not in etypes:
+            etypes.append(label)
+    remote_mode = "Remote" if re.search(r"\bremote\b|work from home|wfh", low) else ("Hybrid" if "hybrid" in low else ("On-site" if re.search(r"on[- ]site|onsite", low) else ""))
+    # seniority
+    sen = ""
+    for kw, label in [("intern", "Intern"), ("junior", "Junior"), ("entry level", "Entry"), ("entry-level", "Entry"),
+                      ("mid-level", "Mid"), ("senior", "Senior"), ("staff", "Staff"), ("principal", "Principal"),
+                      ("lead", "Lead"), ("head of", "Head"), ("director", "Director"), ("vp ", "VP"), ("chief", "C-level")]:
+        if kw in low:
+            sen = label
+            break
+    # salary
+    sal = ""
+    ms = re.search(r"([$€£₹]|USD|EUR|GBP|AED|SAR|EGP|QAR|KWD|INR)\s?[\d.,]{2,}\s?[kK]?(?:\s?[-–to]{1,3}\s?[$€£₹]?[\d.,]{2,}\s?[kK]?)?(?:\s?(?:per|/)\s?(?:year|yr|annum|month|mo|hour|hr))?", blob)
+    if ms:
+        sal = ms.group(0).strip()
+    # posted
+    posted = ""
+    mp = re.search(r"(\d+)\s+(hour|day|week|month)s?\s+ago|(today|yesterday|just posted)", low)
+    if mp:
+        posted = mp.group(0)
+    dom = domain(url)
     return {
         "id": "JOB-" + str(abs(hash(url.split("?")[0])) % (10 ** 8)).zfill(8),
         "title": title, "role": role or title, "company": company, "location": loc, "country": country,
-        "url": url, "source": src, "snippet": raw[:400], "channel": "exa", "fetched_at": now(),
+        "url": url, "source": src, "snippet": raw[:1800], "channel": "exa", "fetched_at": now(),
+        "employment_type": etypes[0] if etypes else "", "work_mode": remote_mode, "seniority": sen,
+        "salary": sal, "posted": posted,
+        "logo": "https://www.google.com/s2/favicons?domain=" + dom + "&sz=64",
     }
 
 
