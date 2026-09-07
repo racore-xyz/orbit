@@ -2336,7 +2336,7 @@ const WM_LAND: [number, number][] = (() => {
   return dots;
 })();
 
-function WorldDemandMap({ demand }: { demand: { country: string; count: number; lat: number; lon: number }[] }) {
+function WorldDemandMap({ t, demand }: { t: T; demand: { country: string; count: number; lat: number; lon: number }[] }) {
   const pts = demand.filter((d) => d.country !== 'Unknown' && d.country !== 'Remote' && !(d.lat === 0 && d.lon === 0));
   const max = Math.max(1, ...pts.map((d) => d.count));
   const remote = demand.find((d) => d.country === 'Remote')?.count || 0;
@@ -2506,7 +2506,7 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
         {(busy || progress.percent > 0) && <div className="o-loader"><div className="o-loader-head"><span className={`o-spinner${busy ? '' : ' done'}`} /><b>{progress.percent}%</b><span className="o-loader-label">{progress.label}</span>{busy && <Btn variant="ghost" size="sm" onClick={cancel}>{t('Cancel', 'إلغاء')}</Btn>}</div><div className="o-progress lg"><i style={{ width: `${progress.percent}%` }} /></div></div>}
         {error && <div className="o-result error">{error}</div>}
       </Card>
-      {res && res.demand.length > 0 && <Card><CardHead title={t('Where the jobs are', 'أين الوظائف')} sub={t('Hiring demand for this search, by country.', 'الطلب على التوظيف لهذا البحث، حسب الدولة.')} /><WorldDemandMap demand={res.demand} /></Card>}
+      {res && res.demand.length > 0 && <Card><CardHead title={t('Where the jobs are', 'أين الوظائف')} sub={t('Hiring demand for this search, by country.', 'الطلب على التوظيف لهذا البحث، حسب الدولة.')} /><WorldDemandMap t={t} demand={res.demand} /></Card>}
       {jobs.length > 0 && (
         <Card>
           <CardHead title={t(`${shown.length} of ${jobs.length} jobs`, `${shown.length} من ${jobs.length} وظيفة`)} action={<div className="o-flex"><select className="o-input" aria-label="Country" style={{ height: 32 }} value={fCountry} onChange={(e) => setFCountry(e.target.value)}><option value="all">{t('All countries', 'كل الدول')}</option>{countries.map((c) => <option key={c} value={c}>{c}</option>)}</select><select className="o-input" aria-label="Source" style={{ height: 32 }} value={fSource} onChange={(e) => setFSource(e.target.value)}><option value="all">{t('All sources', 'كل المصادر')}</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>} />
@@ -2622,7 +2622,7 @@ function JobMapPage({ t }: { t: T }) {
   return (
     <>
       <PageHead eyebrow={t('Global hiring demand', 'الطلب العالمي على التوظيف')} title={t('Job Map', 'خريطة الوظائف')} spark={false} sub={t('Hiring hotspots from your pipeline and searches. Bigger, warmer circles mean more openings.', 'بؤر التوظيف من قائمتك وأبحاثك. الدوائر الأكبر والأدفأ تعني وظائف أكثر.')} />
-      <Card><WorldDemandMap demand={demand} /></Card>
+      <Card><WorldDemandMap t={t} demand={demand} /></Card>
       <div className="o-grid o-grid-2">
         <Card><CardHead title={t('Top countries', 'أعلى الدول')} />{demand.length ? demand.filter((d) => d.country !== 'Unknown').slice(0, 10).map((d) => <Row key={d.country} icon={MapPin} title={d.country} meta={t(`${d.count} in your pipeline`, `${d.count} في قائمتك`)} right={<Chip tone="violet">{d.count}</Chip>} />) : <EmptyState icon={Globe2} title={t('No data yet', 'لا توجد بيانات بعد')} text={t('Add jobs to your pipeline to populate the map.', 'أضف وظائف لقائمتك لملء الخريطة.')} />}</Card>
         <Card><CardHead title={t('Recent searches', 'أحدث عمليات البحث')} />{runs.slice(0, 8).map((r) => <Row key={r.id} icon={Briefcase} title={r.query} meta={`${r.count} · ${new Date(r.saved_at).toLocaleDateString()}`} />)}{!runs.length && <EmptyState icon={Search} title={t('No searches yet', 'لا يوجد بحث بعد')} text="" />}</Card>
