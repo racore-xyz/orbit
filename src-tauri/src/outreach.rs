@@ -566,8 +566,9 @@ pub fn autodraft_job(app: tauri::AppHandle, job_id: String, limit: usize, cancel
       }
     }
   }
-  let title = if failed == 0 { format!("{done} drafts ready to review") } else { format!("{done} drafts ready, {failed} failed") };
-  let text = if failed == 0 { "Open Outreach: every contact has a draft in your style waiting for your approval.".to_string() } else { format!("Last error: {last_err}") };
+  if failed > 0 { crate::logs::add("error", "autodraft", &format!("{failed} draft(s) failed. Last error: {last_err}")); }
+  let title = if failed == 0 { format!("{done} drafts ready to review") } else { format!("{done} drafts ready · {failed} need attention") };
+  let text = if failed == 0 { "Open Outreach: every contact has a draft in your style waiting for your approval.".to_string() } else { format!("{done} ready in Outreach · {failed} failed — see the Log Center for details.") };
   let _ = crate::workspace::notify(Some(&app), "autodraft", &title, &text, Some("outreach"));
   let _ = crate::workspace::log("outreach".into(), format!("Auto-draft finished: {done} ready, {failed} failed"));
   let _ = app.emit(&topic, serde_json::json!({ "type": "done", "done": done, "failed": failed, "total": total, "percent": 100 }));
@@ -597,7 +598,7 @@ pub fn run_followups_job(app: tauri::AppHandle, job_id: String, cancel: std::syn
         if auto {
           match send(id.clone(), subject, body, step, None, None) {
             Ok(_) => { sent += 1; let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": true, "action": "sent", "percent": ((i + 1) * 100 / total.max(1)) })); }
-            Err(e) => { failed += 1; last_err = e.clone(); let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": false, "error": e, "percent": ((i + 1) * 100 / total.max(1)) })); if e.to_lowercase().contains("daily") || e.contains("kill switch") || e.contains("No mailbox") || e.contains("mailbox") { break; } }
+            Err(e) => { failed += 1; last_err = e.clone(); crate::logs::add("error", "followup", &format!("Follow-up to {name} failed: {e}")); let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": false, "error": e, "percent": ((i + 1) * 100 / total.max(1)) })); if e.to_lowercase().contains("daily") || e.contains("kill switch") || e.contains("No mailbox") || e.contains("mailbox") { break; } }
           }
         } else {
           let mut s2 = load();
@@ -610,9 +611,10 @@ pub fn run_followups_job(app: tauri::AppHandle, job_id: String, cancel: std::syn
       Err(e) => { failed += 1; last_err = e.clone(); let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "thread_id": id, "label": name, "ok": false, "error": e, "percent": ((i + 1) * 100 / total.max(1)) })); if e.contains("No API key") || e.contains("No LLM provider") { break; } }
     }
   }
+  if failed > 0 { crate::logs::add("error", "followup", &format!("{failed} follow-up send(s) failed. Last error: {last_err}")); }
   let title = if auto { format!("{sent} follow-ups sent") } else { format!("{drafted} follow-ups drafted") };
-  let text = if failed > 0 { format!("{} · {failed} failed (last: {last_err})", if auto { format!("{sent} sent") } else { format!("{drafted} ready to approve in Outreach") }) }
-    else if auto { format!("{sent} due follow-ups sent automatically.") }
+  let text = if auto { if failed > 0 { format!("{sent} sent · {failed} need attention — open the Log Center.") } else { format!("{sent} due follow-ups sent automatically.") } }
+    else if failed > 0 { format!("{drafted} drafted · {failed} need attention — open the Log Center.") }
     else { format!("{drafted} due follow-ups drafted — approve them in Outreach.") };
   let _ = crate::workspace::notify(Some(&app), "followup", &title, &text, Some("outreach"));
   let _ = crate::workspace::log("outreach".into(), format!("Follow-ups run: {sent} sent, {drafted} drafted, {failed} failed"));

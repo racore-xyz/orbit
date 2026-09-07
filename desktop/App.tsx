@@ -2596,6 +2596,11 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
   const [runId, setRunId] = useState<string | null>(null);
   const [selected, setSelected] = useState<JJob | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [adding, setAdding] = useState<Set<string>>(new Set());
+  const [addProg, setAddProg] = useState<{ percent: number; label: string } | null>(null);
+  const [bulkInfo, setBulkInfo] = useState('');
+  const addRef = useRef<string | null>(null);
+  const addUn = useRef<UnlistenFn | null>(null);
   const jobRef = useRef<string | null>(null);
   const un = useRef<UnlistenFn | null>(null);
   const stop = () => { un.current?.(); un.current = null; jobRef.current = null; };
@@ -2610,7 +2615,7 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
   /* oxlint-disable react/react-compiler */
   useEffect(() => { void loadHistory(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (openRunId) { void openRun(openRunId); onOpened?.(); } }, [openRunId]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => { if (jobRef.current) void invoke('bridge_cancel', { jobId: jobRef.current }); stop(); }, []);
+  useEffect(() => () => { if (jobRef.current) void invoke('bridge_cancel', { jobId: jobRef.current }); if (addRef.current) void invoke('job_cancel', { jobId: addRef.current }); addUn.current?.(); stop(); }, []);
   /* oxlint-enable react/react-compiler */
   const run = async () => {
     if (!query.trim()) { setError(t('Type a role, skills or title first.', 'اكتب وظيفة أو مهارات أولاً.')); return; }
@@ -2628,7 +2633,25 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
   const saveRun = async (id: string, r: JobResult) => { try { await invoke('run_save', { run: { id, mode: 'jobs', query: r.query, target, calls: [], fetched_at: r.fetched_at, leads: r.jobs, result: r, saved_at: new Date().toISOString() } }); await loadHistory(); } catch { /* ignore */ } };
   const deleteRun = async (id: string) => { try { await invoke('run_delete', { id }); if (id === runId) { setRes(null); setLive([]); setRunId(null); } await loadHistory(); } catch { /* ignore */ } };
   const cancel = async () => { if (jobRef.current) await invoke('bridge_cancel', { jobId: jobRef.current }); };
-  const addToPipeline = async (j: JJob) => { try { await invoke('jobs_application_add', { company: j.company, role: j.role, location: j.location, country: j.country, url: j.url, source: j.source, jobDesc: j.snippet, contactEmail: null }); setAdded((s) => new Set([...s, j.id])); } catch { /* dup */ setAdded((s) => new Set([...s, j.id])); } };
+  const addToPipeline = async (j: JJob) => {
+    setError(''); setAdding((s) => new Set([...s, j.id]));
+    try { await invoke<string>('jobs_application_add_verified', { company: j.company, role: j.role, location: j.location, country: j.country, url: j.url, source: j.source, snippet: j.snippet }); setAdded((s) => new Set([...s, j.id])); }
+    catch (e) { setError(`${j.company || j.role}: ${String(e)}`); }
+    finally { setAdding((s) => { const n = new Set(s); n.delete(j.id); return n; }); }
+  };
+  const bulkAdd = async () => {
+    const items = selShown.map((j) => ({ id: j.id, company: j.company, role: j.role, location: j.location, country: j.country, url: j.url, source: j.source, snippet: j.snippet }));
+    if (!items.length) return;
+    const jid = `addver-${Date.now()}`; addRef.current = jid; setError(''); setBulkInfo(''); setAddProg({ percent: 0, label: t('Verifying company emails…', 'التحقق من إيميلات الشركات…') });
+    addUn.current = await listen<{ type: string; percent?: number; label?: string; id?: string; ok?: boolean; added?: number; skipped?: number }>(`jobs://${jid}`, (ev) => {
+      const e = ev.payload;
+      if (e.type === 'start' || e.type === 'progress') setAddProg({ percent: e.percent ?? 0, label: e.label || '' });
+      else if (e.type === 'item') { if (e.ok && e.id) setAdded((a) => new Set([...a, e.id!])); setAddProg((p) => p ? { ...p, percent: e.percent ?? p.percent } : p); }
+      else if (e.type === 'done') { setAddProg(null); addRef.current = null; addUn.current?.(); addUn.current = null; setSel(new Set()); setBulkInfo(t(`${e.added ?? 0} added with a contact email · ${e.skipped ?? 0} skipped (no public email found)`, `${e.added ?? 0} أُضيفت ببريد تواصل · ${e.skipped ?? 0} تم تخطيها (لا يوجد بريد عام)`)); }
+      else if (e.type === 'cancelled') { setAddProg(null); addRef.current = null; addUn.current?.(); addUn.current = null; }
+    });
+    try { await invoke('jobs_add_verified', { jobId: jid, items }); } catch (e) { setError(String(e)); setAddProg(null); addRef.current = null; }
+  };
   const jobs = res ? res.jobs : live;
   const countries = [...new Set(jobs.map((j) => j.country))].sort();
   const sources = [...new Set(jobs.map((j) => j.source))].sort();
@@ -2637,11 +2660,6 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
   const allSel = shown.length > 0 && shown.every((j) => sel.has(j.id));
   const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleAll = () => setSel((s) => { if (shown.every((j) => s.has(j.id))) { const n = new Set(s); shown.forEach((j) => n.delete(j.id)); return n; } return new Set([...s, ...shown.map((j) => j.id)]); });
-  const bulkAdd = async () => {
-    const items = selShown.map((j) => ({ company: j.company, role: j.role, location: j.location, country: j.country, url: j.url, source: j.source, snippet: j.snippet }));
-    if (!items.length) return;
-    try { await invoke('jobs_applications_add_bulk', { items }); setAdded((a) => new Set([...a, ...selShown.map((j) => j.id)])); setSel(new Set()); setError(''); } catch (e) { setError(String(e)); }
-  };
   return (
     <>
       <PageHead eyebrow={t('Global · Arab · Gulf boards', 'مواقع عالمية · عربية · خليجية')} title={t('Find Jobs', 'ابحث عن وظائف')} spark={false} sub={t('One search across LinkedIn, Indeed, Glassdoor, Bayt, Wuzzuf, GulfTalent, NaukriGulf and more, through Agent Reach.', 'بحث واحد عبر LinkedIn وIndeed وGlassdoor وBayt وWuzzuf وGulfTalent وNaukriGulf وغيرها، عبر Agent Reach.')} />
@@ -2658,7 +2676,9 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
       {res && res.demand.length > 0 && <Card><CardHead title={t('Where the jobs are', 'أين الوظائف')} sub={t('Hiring demand for this search, by country.', 'الطلب على التوظيف لهذا البحث، حسب الدولة.')} /><WorldDemandMap t={t} demand={res.demand} /></Card>}
       {jobs.length > 0 && (
         <Card>
-          <CardHead title={t(`${shown.length} of ${jobs.length} jobs`, `${shown.length} من ${jobs.length} وظيفة`)} action={<div className="o-flex">{sel.size > 0 && <><Btn size="sm" icon={Send} onClick={bulkAdd}>{t(`Add ${selShown.length} to pipeline`, `أضف ${selShown.length} للقائمة`)}</Btn><Btn size="sm" variant="ghost" onClick={() => setSel(new Set())}>{t('Clear', 'مسح')}</Btn></>}<select className="o-input" aria-label="Country" style={{ height: 32 }} value={fCountry} onChange={(e) => setFCountry(e.target.value)}><option value="all">{t('All countries', 'كل الدول')}</option>{countries.map((c) => <option key={c} value={c}>{c}</option>)}</select><select className="o-input" aria-label="Source" style={{ height: 32 }} value={fSource} onChange={(e) => setFSource(e.target.value)}><option value="all">{t('All sources', 'كل المصادر')}</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>} />
+          <CardHead title={t(`${shown.length} of ${jobs.length} jobs`, `${shown.length} من ${jobs.length} وظيفة`)} action={<div className="o-flex">{sel.size > 0 && <><Btn size="sm" icon={Send} onClick={bulkAdd} disabled={!!addProg}>{addProg ? t('Verifying…', 'جاري التحقق…') : t(`Add ${selShown.length} (verify emails)`, `أضف ${selShown.length} (تحقق من الإيميل)`)}</Btn><Btn size="sm" variant="ghost" onClick={() => setSel(new Set())}>{t('Clear', 'مسح')}</Btn></>}<select className="o-input" aria-label="Country" style={{ height: 32 }} value={fCountry} onChange={(e) => setFCountry(e.target.value)}><option value="all">{t('All countries', 'كل الدول')}</option>{countries.map((c) => <option key={c} value={c}>{c}</option>)}</select><select className="o-input" aria-label="Source" style={{ height: 32 }} value={fSource} onChange={(e) => setFSource(e.target.value)}><option value="all">{t('All sources', 'كل المصادر')}</option>{sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>} />
+          {addProg && <div className="o-loader"><div className="o-loader-head"><span className="o-spinner" /><b>{addProg.percent}%</b><span className="o-loader-label">{t('Finding a contact email for each company — only ones with an email are added', 'إيجاد بريد تواصل لكل شركة — تُضاف فقط التي لها بريد')} · {addProg.label}</span></div><div className="o-progress lg"><i style={{ width: `${addProg.percent}%` }} /></div></div>}
+          {bulkInfo && <div className="o-result"><Check size={16} />{bulkInfo}</div>}
           <div className="o-jobs-table">
           <Table columns={[<input key="all" type="checkbox" aria-label="Select all" checked={allSel} onChange={toggleAll} />, t('Role', 'الوظيفة'), t('Company', 'الشركة'), t('Location', 'الموقع'), t('Work mode', 'نمط العمل'), t('Salary', 'الراتب'), t('Source', 'المصدر'), '']}>
             {shown.slice(0, 200).map((j) => (
@@ -2670,7 +2690,7 @@ function JobFinder({ t, openRunId, onOpened }: { t: T; openRunId?: string | null
                 <td>{j.work_mode || j.employment_type ? <div className="o-flex" style={{ gap: 4, flexWrap: 'wrap' }}>{j.work_mode && <Chip tone={j.work_mode === 'Remote' ? 'green' : 'sky'}>{j.work_mode}</Chip>}{j.employment_type && <Chip tone="neutral">{j.employment_type}</Chip>}</div> : '—'}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{j.salary || '—'}</td>
                 <td>{j.source}</td>
-                <td onClick={(e) => e.stopPropagation()}>{added.has(j.id) ? <Chip tone="green">{t('Added', 'مضاف')}</Chip> : <Btn size="sm" variant="secondary" onClick={() => addToPipeline(j)}>{t('Add', 'إضافة')}</Btn>}</td>
+                <td onClick={(e) => e.stopPropagation()}>{added.has(j.id) ? <Chip tone="green">{t('Added', 'مضاف')}</Chip> : <Btn size="sm" variant="secondary" onClick={() => addToPipeline(j)} disabled={adding.has(j.id)}>{adding.has(j.id) ? t('Searching…', 'بحث…') : t('Add', 'إضافة')}</Btn>}</td>
               </tr>
             ))}
           </Table>
@@ -2853,6 +2873,13 @@ function LogCenterPage({ t }: { t: T }) {
     <>
       <PageHead eyebrow={t('Everything the app does', 'كل ما يفعله التطبيق')} title={t('Log Center', 'مركز السجلات')} sub={t('One live stream of every event — searches, sends, follow-ups, bounces, errors. Forward it to any URL to collect the data on your own website.', 'دفق حيّ لكل حدث — عمليات بحث، إرسال، متابعات، ارتدادات، أخطاء. وجّهه لأي رابط لتجميع البيانات على موقعك.')} actions={<div className="o-flex"><Btn variant="secondary" size="sm" icon={RefreshCw} onClick={load}>{t('Refresh', 'تحديث')}</Btn><Btn variant="ghost" size="sm" icon={Trash2} onClick={clear}>{t('Clear', 'مسح')}</Btn></div>} />
       {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} /><span style={{ wordBreak: 'break-all' }}>{msg.text}</span></div>}
+      <div className="o-grid o-grid-4">
+        <StatCard icon={Shield} label={t('Issues', 'مشاكل')} value={String(entries.filter((e) => e.level === 'error').length)} trend={null} tone="coral" />
+        <StatCard icon={Zap} label={t('Warnings', 'تحذيرات')} value={String(entries.filter((e) => e.level === 'warn').length)} trend={null} tone="orange" />
+        <StatCard icon={Check} label={t('Successful', 'ناجحة')} value={String(entries.filter((e) => e.level === 'success').length)} trend={null} tone="green" />
+        <StatCard icon={Activity} label={t('Total events', 'إجمالي الأحداث')} value={String(status.count)} trend={null} tone="violet" />
+      </div>
+      {entries.some((e) => e.level === 'error') && level !== 'error' && <button className="o-result error" style={{ width: '100%', textAlign: 'start', cursor: 'pointer' }} onClick={() => setLevel('error')}><Shield size={16} />{t(`${entries.filter((e) => e.level === 'error').length} issue(s) need attention — click to view only errors.`, `${entries.filter((e) => e.level === 'error').length} مشكلة تحتاج انتباه — اضغط لعرض الأخطاء فقط.`)}</button>}
       <Card>
         <CardHead title={t('Forward to a website', 'التوجيه إلى موقع')} sub={t('Every new entry is POSTed as JSON to this endpoint (best-effort).', 'كل سجل جديد يُرسَل كـ JSON إلى هذا الرابط (بأفضل جهد).')} action={<span className={`o-dot ${status.forward_enabled ? 'green' : 'neutral'}`} title={status.forward_enabled ? 'Forwarding on' : 'Off'} />} />
         <div className="o-flex" style={{ gap: 8, flexWrap: 'wrap' }}>
