@@ -803,6 +803,20 @@ label.o-row:hover { background: var(--surface-2); }
 .o-diff-line .o-md p, .o-diff-line .o-md li { margin: 2px 0; }
 .o-diff-gap { height: 8px; }
 .o-stream-raw { white-space: pre-wrap; }
+/* Overleaf-style live résumé editor */
+.o-editor-split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+.o-editor-pane { display: flex; flex-direction: column; min-width: 0; }
+.o-editor-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted-2); font-weight: 700; margin-bottom: 6px; }
+.o-editor-src { width: 100%; height: 500px; resize: vertical; padding: 12px 14px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12.5px; line-height: 1.6; white-space: pre; overflow: auto; }
+.o-editor-preview { height: 500px; max-height: 500px; margin: 0; }
+@media (max-width: 900px) { .o-editor-split { grid-template-columns: 1fr; } }
+/* Résumé versions */
+.o-versions { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.o-version { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.o-version.active { border-color: var(--green); background: var(--green-soft); }
+.o-version-info { min-width: 0; }
+.o-version-info b { font-size: 13px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.o-version-info small { font-size: 11px; color: var(--muted); }
 .o-type-caret { display: inline-block; width: 7px; height: 15px; margin-inline-start: 2px; background: var(--primary); vertical-align: text-bottom; animation: o-blink 1s steps(2) infinite; }
 @keyframes o-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 @media (max-width: 700px) { .o-mode-pick { grid-template-columns: 1fr; } }

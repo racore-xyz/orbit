@@ -28,6 +28,16 @@ pub struct Profile {
   pub target_locations: String,
   #[serde(default)]
   pub seniority: String,
+  #[serde(default)]
+  pub resume_versions: Vec<ResumeVersion>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct ResumeVersion {
+  pub id: String,
+  pub label: String,
+  pub text: String,
+  pub created_at: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

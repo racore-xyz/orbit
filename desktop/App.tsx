@@ -1311,7 +1311,8 @@ function Outreach({ t, seed, onSeeded }: { t: T; seed: Lead[] | null; onSeeded: 
   );
 }
 
-type WsProfile = { name: string; company: string; role: string; website: string; email: string; industry: string; target_market: string; persona: string; offer: string; goals: string; language: string; resume_text?: string; portfolio_text?: string; target_roles?: string; target_locations?: string; seniority?: string };
+type ResumeVersion = { id: string; label: string; text: string; created_at: string };
+type WsProfile = { name: string; company: string; role: string; website: string; email: string; industry: string; target_market: string; persona: string; offer: string; goals: string; language: string; resume_text?: string; portfolio_text?: string; target_roles?: string; target_locations?: string; seniority?: string; resume_versions?: ResumeVersion[] };
 type WsSummary = {
   mode?: string;
   workspace: { id: string; demo?: boolean; notifications?: { id: string; at: string; kind: string; title: string; text: string; read: boolean; link?: string | null }[]; created_at: string; updated_at: string; profile: WsProfile; onboarding: { completed: boolean; step: number; completed_at?: string | null; skipped_connect: boolean }; activity: { at: string; kind: string; text: string }[]; notes: string };
@@ -2278,6 +2279,8 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
   const [streaming, setStreaming] = useState(false);
   const [baseAtStream, setBaseAtStream] = useState('');
   const [view, setView] = useState<'diff' | 'new' | 'original'>('diff');
+  const [pendingUse, setPendingUse] = useState<string | null>(null);
+  const versions = ws?.workspace.profile.resume_versions || [];
   const fileRef = useRef<HTMLInputElement>(null);
   const jobRef = useRef<string | null>(null);
   const un = useRef<UnlistenFn | null>(null);
@@ -2309,7 +2312,7 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
     un.current = await listen<{ type: string; text?: string; error?: string }>(`resume://${id}`, (ev) => {
       const e = ev.payload;
       if (e.type === 'delta') setImproved((prev) => prev + (e.text || ''));
-      else if (e.type === 'done') { if (e.text) setImproved(e.text); setStreaming(false); jobRef.current = null; un.current?.(); un.current = null; }
+      else if (e.type === 'done') { const finalText = e.text || ''; if (finalText) { setImproved(finalText); void saveVersion(finalText, role ? `${role}` : t('Rewrite', 'صياغة')); } setStreaming(false); jobRef.current = null; un.current?.(); un.current = null; }
       else if (e.type === 'error') { setMsg({ tone: 'coral', text: e.error || 'failed' }); setStreaming(false); jobRef.current = null; un.current?.(); un.current = null; }
       else if (e.type === 'cancelled') { setStreaming(false); jobRef.current = null; un.current?.(); un.current = null; }
     });
@@ -2318,6 +2321,21 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
   };
   const cancel = async () => { if (jobRef.current) await invoke('job_cancel', { jobId: jobRef.current }); };
   const useAsBase = async () => { setResume(improved); if (ws) { setBusy('use'); try { await invoke('workspace_save', { workspace: { ...ws.workspace, profile: { ...ws.workspace.profile, offer: improved, persona: portfolio, target_roles: role } } }); await reload(); setMsg({ tone: 'green', text: t('Saved as your base résumé.', 'تم الحفظ كسيرتك الأساسية.') }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } } };
+  const saveVersion = async (text: string, label: string) => {
+    if (!ws || !text.trim()) return;
+    const v: ResumeVersion = { id: `rv-${Date.now()}`, label: label.slice(0, 60) || t('Version', 'نسخة'), text, created_at: new Date().toISOString() };
+    const list = [v, ...(ws.workspace.profile.resume_versions || []).filter((x) => x.text !== text)].slice(0, 20);
+    try { await invoke('workspace_save', { workspace: { ...ws.workspace, profile: { ...ws.workspace.profile, resume_versions: list } } }); await reload(); } catch { /* ignore */ }
+  };
+  const useVersion = async (v: ResumeVersion) => {
+    if (!ws) return; setBusy(`use-${v.id}`); setPendingUse(null);
+    try { setResume(v.text); await invoke('workspace_save', { workspace: { ...ws.workspace, profile: { ...ws.workspace.profile, offer: v.text } } }); await reload(); setMsg({ tone: 'green', text: t(`Now using “${v.label}” as your base résumé.`, `يتم الآن استخدام «${v.label}» كسيرتك الأساسية.`) }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); }
+  };
+  const deleteVersion = async (id: string) => {
+    if (!ws) return;
+    const list = (ws.workspace.profile.resume_versions || []).filter((x) => x.id !== id);
+    try { await invoke('workspace_save', { workspace: { ...ws.workspace, profile: { ...ws.workspace.profile, resume_versions: list } } }); await reload(); } catch { /* ignore */ }
+  };
   const downloadDocx = async () => {
     setBusy('docx'); setMsg(null);
     try {
@@ -2336,9 +2354,45 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
       <input ref={fileRef} type="file" accept=".docx,.txt,.md" hidden onChange={(e) => void onUpload(e.target.files?.[0])} />
       <PageHead eyebrow={t('Résumé & ATS', 'السيرة والـ ATS')} title={t('Resume & ATS check', 'السيرة وفحص ATS')} spark={false} sub={t('Upload your résumé (.docx) or paste it, then rewrite it live for ATS. Review the diff and export a clean .docx.', 'ارفع سيرتك (.docx) أو الصقها، ثم أعد صياغتها مباشرةً للـ ATS. راجع الفروقات وصدّر ملف .docx نظيف.')} actions={<><Btn variant="secondary" icon={Upload} onClick={() => fileRef.current?.click()} disabled={!!busy || streaming}>{t('Upload résumé', 'ارفع السيرة')}</Btn><Btn variant="secondary" onClick={save} disabled={!!busy || streaming}>{busy === 'save' ? t('Saving…', 'جاري الحفظ…') : t('Save', 'حفظ')}</Btn><Btn icon={Sparkles} variant="ai" onClick={improve} disabled={!!busy || streaming}>{streaming ? t('Rewriting…', 'جاري الصياغة…') : t('Rewrite live for ATS', 'أعد الصياغة مباشرةً')}</Btn></>} />
       {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} /><span style={{ wordBreak: 'break-all' }}>{msg.text}</span></div>}
+      <Card>
+        <CardHead title={t('Base résumé — live editor', 'السيرة الأساسية — محرر مباشر')} sub={t('Edit the source on the left; the rendered résumé updates live on the right, like Overleaf. This is the .docx you export.', 'حرّر المصدر على اليسار؛ السيرة المنسّقة تتحدّث مباشرةً على اليمين، مثل Overleaf. هذا هو ملف .docx الذي تصدّره.')} action={<Btn variant="ghost" size="sm" icon={Upload} onClick={() => fileRef.current?.click()}>{t('Upload', 'رفع')}</Btn>} />
+        <label className="o-field">{t('Target role', 'الوظيفة المستهدفة')}<input value={role} onChange={(e) => setRole(e.target.value)} placeholder={t('e.g. Senior Backend Engineer', 'مثال: مهندس Backend أول')} /></label>
+        <div className="o-editor-split">
+          <div className="o-editor-pane">
+            <div className="o-editor-label">{t('Source', 'المصدر')}</div>
+            <textarea className="o-input o-editor-src" value={resume} onChange={(e) => setResume(e.target.value)} placeholder={t('Paste your résumé text, or upload a .docx…', 'الصق نص سيرتك، أو ارفع ملف .docx…')} spellCheck={false} />
+          </div>
+          <div className="o-editor-pane">
+            <div className="o-editor-label">{t('Rendered preview', 'المعاينة المنسّقة')}</div>
+            <div className="o-editor-preview o-resume-view doc">{resume.trim() ? <Md text={resume} /> : <span className="o-muted">{t('Your résumé preview appears here as you type.', 'تظهر معاينة سيرتك هنا أثناء الكتابة.')}</span>}</div>
+          </div>
+        </div>
+      </Card>
       <div className="o-grid o-grid-2">
-        <Card><CardHead title={t('Base résumé', 'السيرة الأساسية')} sub={t('Upload a .docx / .txt or paste. Editable.', 'ارفع .docx / .txt أو الصق. قابل للتعديل.')} action={<Btn variant="ghost" size="sm" icon={Upload} onClick={() => fileRef.current?.click()}>{t('Upload', 'رفع')}</Btn>} /><label className="o-field">{t('Target role', 'الوظيفة المستهدفة')}<input value={role} onChange={(e) => setRole(e.target.value)} placeholder={t('e.g. Senior Backend Engineer', 'مثال: مهندس Backend أول')} /></label><textarea className="o-input" rows={16} style={{ width: '100%', height: 'auto', padding: 10, marginTop: 10, fontFamily: 'var(--font-sans)' }} value={resume} onChange={(e) => setResume(e.target.value)} placeholder={t('Paste your résumé text, or upload a .docx…', 'الصق نص سيرتك، أو ارفع ملف .docx…')} /></Card>
-        <Card><CardHead title={t('Portfolio / projects', 'معرض الأعمال / المشاريع')} sub={t('Links, projects, achievements used to tailor per job.', 'روابط ومشاريع وإنجازات تُستخدم للتخصيص لكل وظيفة.')} /><textarea className="o-input" rows={19} style={{ width: '100%', height: 'auto', padding: 10, fontFamily: 'var(--font-sans)' }} value={portfolio} onChange={(e) => setPortfolio(e.target.value)} placeholder={t('Projects, GitHub, live sites, notable results…', 'مشاريع، GitHub، مواقع حية، نتائج بارزة…')} /></Card>
+        <Card><CardHead title={t('Portfolio / projects', 'معرض الأعمال / المشاريع')} sub={t('Links, projects, achievements used to tailor per job.', 'روابط ومشاريع وإنجازات تُستخدم للتخصيص لكل وظيفة.')} /><textarea className="o-input" rows={12} style={{ width: '100%', height: 'auto', padding: 10, fontFamily: 'var(--font-sans)' }} value={portfolio} onChange={(e) => setPortfolio(e.target.value)} placeholder={t('Projects, GitHub, live sites, notable results…', 'مشاريع، GitHub، مواقع حية، نتائج بارزة…')} /></Card>
+        <Card>
+          <CardHead title={t('Versions', 'النسخ')} sub={t('Each live rewrite is saved here. Pick one and confirm to make it your base résumé.', 'كل صياغة مباشرة تُحفظ هنا. اختر واحدة وأكّد لجعلها سيرتك الأساسية.')} />
+          {versions.length ? (
+            <div className="o-versions">
+              {versions.map((v) => {
+                const inUse = v.text.trim() === resume.trim();
+                return (
+                  <div key={v.id} className={`o-version${inUse ? ' active' : ''}`}>
+                    <div className="o-version-info"><b>{v.label}</b><small>{new Date(v.created_at).toLocaleString()} · {v.text.length} {t('chars', 'حرف')}</small></div>
+                    <div className="o-flex">
+                      {inUse ? <Chip tone="green">{t('In use', 'مستخدمة')}</Chip>
+                        : pendingUse === v.id ? <><Btn size="sm" icon={Check} onClick={() => useVersion(v)} disabled={!!busy}>{t('Confirm use', 'تأكيد الاستخدام')}</Btn><Btn size="sm" variant="ghost" onClick={() => setPendingUse(null)}>{t('Cancel', 'إلغاء')}</Btn></>
+                        : <Btn size="sm" variant="secondary" onClick={() => setPendingUse(v.id)}>{t('Use this version', 'استخدم هذه النسخة')}</Btn>}
+                      <Btn size="sm" variant="ghost" onClick={() => { setResume(v.text); setImproved(''); }}>{t('Open', 'فتح')}</Btn>
+                      <button className="o-more" aria-label={t('Delete', 'حذف')} onClick={() => deleteVersion(v.id)}><Trash2 size={13} /></button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <EmptyState icon={History} title={t('No versions yet', 'لا توجد نسخ بعد')} text={t('Run a live rewrite — each result is saved as a version you can switch to.', 'شغّل صياغة مباشرة — كل نتيجة تُحفظ كنسخة يمكنك التبديل إليها.')} />}
+          <Btn variant="ghost" size="sm" icon={Copy} onClick={() => void saveVersion(resume, `${role || t('Manual', 'يدوي')} · ${t('current', 'حالية')}`)} disabled={!resume.trim() || !!busy}>{t('Save current as a version', 'احفظ الحالية كنسخة')}</Btn>
+        </Card>
       </div>
       {(streaming || improved) && (
         <Card>
