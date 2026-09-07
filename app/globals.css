@@ -762,6 +762,10 @@ label.o-row:hover { background: var(--surface-2); }
 .o-log-time { flex: 0 0 auto; color: var(--muted); font-variant-numeric: tabular-nums; width: 150px; white-space: nowrap; }
 .o-log-kind { flex: 0 0 auto; color: var(--muted-2); font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; width: 96px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .o-log-msg { flex: 1; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.o-facts-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.o-facts-row:last-child { border-bottom: 0; }
+.o-facts-row > span { color: var(--muted); }
+.o-facts-row > b { text-align: end; word-break: break-all; }
 .o-clickrow:hover { background: var(--surface-2); }
 .o-clickrow .o-link { color: var(--primary); }
 .o-jobcard { background: var(--surface); border-radius: var(--radius-lg); width: min(860px, 94vw); max-height: 90vh; overflow: auto; box-shadow: 0 24px 60px rgba(20, 20, 40, 0.28); }

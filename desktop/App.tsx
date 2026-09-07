@@ -377,6 +377,63 @@ type IntStatus = {
   config_path: string;
 };
 
+type RacoreStatus = { linked: boolean; license_code: string; expires_at?: string | null; linked_at?: string | null; device_code_short: string; api: string; is_default: boolean };
+function RacoreLicense({ t }: { t: T }) {
+  const [st, setSt] = useState<RacoreStatus | null>(null);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState('');
+  const [verify, setVerify] = useState<{ valid: boolean; expires_at: string | null } | null>(null);
+  const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const [ea, setEa] = useState({ user_name: '', organization: '', email: '', country: '', usage_type: '' });
+  const [showEa, setShowEa] = useState(false);
+  const load = async () => { try { setSt(await invoke<RacoreStatus>('racore_status')); } catch { /* ignore */ } };
+  /* oxlint-disable react/react-compiler */
+  useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const doVerify = async () => { setBusy('verify'); setMsg(null); setVerify(null); try { const r = await invoke<{ valid: boolean; expires_at: string | null }>('racore_verify', { licenseCode: code }); setVerify(r); setMsg({ tone: r.valid ? 'green' : 'coral', text: r.valid ? t('License is valid.', 'الترخيص صالح.') : t('License is invalid or expired.', 'الترخيص غير صالح أو منتهٍ.') }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const doLogin = async () => { setBusy('login'); setMsg(null); try { await invoke('racore_login', { licenseCode: code }); setCode(''); setVerify(null); await load(); setMsg({ tone: 'green', text: t('Device linked. AI now runs through your Racore license.', 'تم ربط الجهاز. الذكاء الاصطناعي يعمل الآن عبر ترخيص Racore.') }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const doTest = async () => { setBusy('test'); setMsg(null); try { const r = await invoke<string>('racore_test'); setMsg({ tone: 'green', text: t(`Gateway AI replied: ${r.slice(0, 40)}`, `ردّ الذكاء الاصطناعي: ${r.slice(0, 40)}`) }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const doLogout = async () => { setBusy('logout'); try { await invoke('racore_logout'); await load(); setMsg({ tone: 'green', text: t('Logged out.', 'تم تسجيل الخروج.') }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const doEa = async () => { setBusy('ea'); setMsg(null); try { await invoke('racore_early_access', ea); setMsg({ tone: 'green', text: t('Early-access request sent.', 'تم إرسال طلب الوصول المبكر.') }); setEa({ user_name: '', organization: '', email: '', country: '', usage_type: '' }); setShowEa(false); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
+  const expired = st?.expires_at ? new Date(st.expires_at).toISOString() < new Date().toISOString() : false;
+  const state = !st?.linked ? { label: t('Not activated', 'غير مفعّل'), tone: 'neutral' as Tone } : expired ? { label: t('Expired', 'منتهٍ'), tone: 'coral' as Tone } : { label: t('Active', 'مفعّل'), tone: 'green' as Tone };
+  return (
+    <Card>
+      <CardHead title={<span className="o-flex">{t('Racore license', 'ترخيص Racore')} <Chip tone={state.tone}>{state.label}</Chip></span>} sub={t('Activate the app with a license code. AI runs through the Racore gateway — no API keys to manage.', 'فعّل التطبيق بكود ترخيص. الذكاء الاصطناعي يعمل عبر بوابة Racore — بدون إدارة مفاتيح.')} action={<KeyRound size={16} className="o-muted" />} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} /><span style={{ wordBreak: 'break-all' }}>{msg.text}</span></div>}
+      {st?.linked ? (
+        <div>
+          <div className="o-facts-row"><span>{t('License', 'الترخيص')}</span><b>{st.license_code || '—'}</b></div>
+          <div className="o-facts-row"><span>{t('Device', 'الجهاز')}</span><b>{st.device_code_short}</b></div>
+          {st.expires_at && <div className="o-facts-row"><span>{t('Expires', 'ينتهي')}</span><b>{new Date(st.expires_at).toLocaleDateString()}</b></div>}
+          <div className="o-facts-row"><span>{t('AI provider', 'مزود الذكاء')}</span><b>{st.is_default ? t('Racore gateway (default)', 'بوابة Racore (افتراضي)') : t('Racore gateway', 'بوابة Racore')}</b></div>
+          <div className="o-flex o-mt"><Btn variant="secondary" size="sm" icon={Zap} onClick={doTest} disabled={!!busy}>{busy === 'test' ? t('Testing…', 'اختبار…') : t('Test AI', 'اختبر الذكاء')}</Btn><Btn variant="ghost" size="sm" onClick={doLogout} disabled={!!busy}>{t('Sign out', 'خروج')}</Btn></div>
+        </div>
+      ) : (
+        <div>
+          <div className="o-flex" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <input className="o-input" style={{ flex: 1, minWidth: 260 }} value={code} onChange={(e) => setCode(e.target.value)} placeholder="orbit_xxxxxxxxxxxxxxxxxxxxxxxx" />
+            <Btn variant="secondary" onClick={doVerify} disabled={!!busy || !code.trim()}>{busy === 'verify' ? t('Checking…', 'فحص…') : t('Verify', 'تحقق')}</Btn>
+            <Btn onClick={doLogin} disabled={!!busy || !code.trim()}>{busy === 'login' ? t('Activating…', 'تفعيل…') : t('Activate device', 'فعّل الجهاز')}</Btn>
+          </div>
+          {verify && <p className="o-note">{verify.valid ? t(`Valid${verify.expires_at ? ` · expires ${new Date(verify.expires_at).toLocaleDateString()}` : ' · no expiry'}`, `صالح${verify.expires_at ? ` · ينتهي ${new Date(verify.expires_at).toLocaleDateString()}` : ' · بدون انتهاء'}`) : t('Not valid.', 'غير صالح.')}</p>}
+          <p className="o-note">{t('No license? ', 'ليس لديك ترخيص؟ ')}<button className="o-link" onClick={() => setShowEa(!showEa)} style={{ background: 'none', color: 'var(--primary)' }}>{t('Request early access', 'اطلب وصولاً مبكراً')}</button></p>
+          {showEa && (
+            <div className="o-form-grid o-mt">
+              <label className="o-field">{t('Name', 'الاسم')}<input value={ea.user_name} onChange={(e) => setEa({ ...ea, user_name: e.target.value })} /></label>
+              <label className="o-field">{t('Organization', 'الجهة')}<input value={ea.organization} onChange={(e) => setEa({ ...ea, organization: e.target.value })} /></label>
+              <label className="o-field">{t('Email', 'البريد')}<input type="email" value={ea.email} onChange={(e) => setEa({ ...ea, email: e.target.value })} /></label>
+              <label className="o-field">{t('Country', 'الدولة')}<input value={ea.country} onChange={(e) => setEa({ ...ea, country: e.target.value })} /></label>
+              <label className="o-field" style={{ gridColumn: '1 / -1' }}>{t('Usage', 'الاستخدام')}<input value={ea.usage_type} onChange={(e) => setEa({ ...ea, usage_type: e.target.value })} placeholder={t('Education and research', 'تعليم وبحث')} /></label>
+              <div style={{ gridColumn: '1 / -1' }}><Btn size="sm" onClick={doEa} disabled={!!busy || !ea.email.includes('@')}>{busy === 'ea' ? t('Sending…', 'إرسال…') : t('Send request', 'أرسل الطلب')}</Btn></div>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Integrations({ t, setConnected }: { t: T; connected: string[]; setConnected: (x: string[]) => void }) {
   const [st, setSt] = useState<IntStatus | null>(null);
   const [busy, setBusy] = useState('');
@@ -427,6 +484,7 @@ function Integrations({ t, setConnected }: { t: T; connected: string[]; setConne
   return (
     <>
       <PageHead eyebrow={t('Connections', 'الاتصالات')} title={t('Integrations', 'التكاملات')} sub={t('Every connection is real: passwords go to the OS credential store, nothing is sent without your click. Email works over plain SMTP and IMAP, no Gmail API.', 'كل اتصال حقيقي: كلمات المرور في مخزن النظام، ولا يُرسل شيء بدون ضغطتك. البريد يعمل عبر SMTP وIMAP فقط، بدون Gmail API.')} actions={<Btn variant="secondary" size="sm" onClick={() => { void refresh(); void checkReach(); }} disabled={!!busy}>{t('Refresh status', 'تحديث الحالة')}</Btn>} />
+      <RacoreLicense t={t} />
       <Mailboxes t={t} mailboxes={st?.mailboxes || []} reload={refresh} />
       {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} />{msg.text}</div>}
       <div className="o-grid o-grid-2">

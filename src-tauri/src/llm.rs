@@ -18,6 +18,7 @@ pub const PROVIDERS: &[ProviderInfo] = &[
   ProviderInfo { id: "mistral", name: "Mistral", models: &["mistral-medium-latest", "mistral-large-latest"], docs: "https://console.mistral.ai/api-keys" },
   ProviderInfo { id: "groq", name: "Groq", models: &["llama-4-scout", "llama-3.3-70b-versatile"], docs: "https://console.groq.com/keys" },
   ProviderInfo { id: "openrouter", name: "OpenRouter", models: &["openai/gpt-5.1", "anthropic/claude-sonnet-4-5"], docs: "https://openrouter.ai/keys" },
+  ProviderInfo { id: "racore", name: "Racore (license)", models: &["gemini-2.5-flash", "gemini-2.5-pro"], docs: "https://api.racore.xyz" },
 ];
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -25,7 +26,7 @@ pub struct Settings { pub provider: Option<String>, pub model: Option<String>, #
 
 /// Conservative default requests-per-minute per provider (free/entry tiers). Editable in the app.
 pub fn default_rpm(provider: &str) -> u32 {
-  match provider { "openai" => 60, "anthropic" => 50, "google" => 15, "mistral" => 30, "groq" => 30, "openrouter" => 60, _ => 30 }
+  match provider { "openai" => 60, "anthropic" => 50, "google" => 15, "mistral" => 30, "groq" => 30, "openrouter" => 60, "racore" => 55, _ => 30 }
 }
 pub fn rpm_for(provider: &str) -> u32 { settings().rate_limits.get(provider).copied().filter(|r| *r > 0).unwrap_or_else(|| default_rpm(provider)) }
 
@@ -138,7 +139,7 @@ pub fn complete_stream<F: FnMut(&str)>(provider: Option<String>, model: Option<S
       c.post(&url).json(&serde_json::json!({ "systemInstruction": { "parts": [{ "text": system }] }, "contents": [{ "parts": [{ "text": user }] }], "generationConfig": { "maxOutputTokens": max_tokens } })).send().map_err(|e| e.to_string())?
     }
     _ => {
-      let base = match provider.as_str() { "groq" => "https://api.groq.com/openai/v1", "mistral" => "https://api.mistral.ai/v1", "openrouter" => "https://openrouter.ai/api/v1", _ => "https://api.openai.com/v1" };
+      let base = match provider.as_str() { "groq" => "https://api.groq.com/openai/v1", "mistral" => "https://api.mistral.ai/v1", "openrouter" => "https://openrouter.ai/api/v1", "racore" => "https://api.racore.xyz", _ => "https://api.openai.com/v1" };
       c.post(format!("{base}/chat/completions")).bearer_auth(&key)
         .json(&serde_json::json!({ "model": model, "max_tokens": max_tokens, "stream": true, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }] }))
         .send().map_err(|e| e.to_string())?
@@ -187,7 +188,7 @@ fn complete_once(c: &reqwest::blocking::Client, provider: &str, info: &ProviderI
       v.pointer("/candidates/0/content/parts/0/text").and_then(|t| t.as_str()).unwrap_or("").to_string()
     }
     _ => {
-      let base = match provider { "groq" => "https://api.groq.com/openai/v1", "mistral" => "https://api.mistral.ai/v1", "openrouter" => "https://openrouter.ai/api/v1", _ => "https://api.openai.com/v1" };
+      let base = match provider { "groq" => "https://api.groq.com/openai/v1", "mistral" => "https://api.mistral.ai/v1", "openrouter" => "https://openrouter.ai/api/v1", "racore" => "https://api.racore.xyz", _ => "https://api.openai.com/v1" };
       let v = c.post(format!("{base}/chat/completions")).bearer_auth(key)
         .json(&serde_json::json!({ "model": model, "max_tokens": max_tokens, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }] }))
         .send().map_err(|e| e.to_string())?; let v = status_json(v)?;
