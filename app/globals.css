@@ -738,6 +738,9 @@ label.o-row:hover { background: var(--surface-2); }
 .o-mode-card span { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .o-worldmap { width: 100%; }
 .o-worldmap svg { width: 100%; height: auto; display: block; }
+.o-worldmap-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+.o-worldmap-legend .o-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: var(--radius-pill); background: var(--surface-3); color: var(--text-2); }
+.o-worldmap-legend .o-chip-green { background: var(--green-soft); color: var(--green); }
 /* Résumé live rewrite + diff */
 .o-seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
 .o-seg button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface); }

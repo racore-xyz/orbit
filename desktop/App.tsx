@@ -2305,23 +2305,66 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
   );
 }
 
+// Equirectangular projection + a crude dotted landmask (self-authored; the polygons only gate
+// which grid dots light up, so exact borders don't matter — the dots read clearly as a world map).
+const WM_W = 1000, WM_H = 470;
+const WM_LAT_TOP = 80, WM_LAT_BOT = -56, WM_LAT_SPAN = WM_LAT_TOP - WM_LAT_BOT;
+const wmProj = (lon: number, lat: number): [number, number] => [((lon + 180) / 360) * WM_W, ((WM_LAT_TOP - lat) / WM_LAT_SPAN) * WM_H];
+const WM_CONTINENTS: [number, number][][] = [
+  [[-168, 65], [-150, 70], [-125, 70], [-95, 72], [-60, 82], [-55, 62], [-78, 50], [-52, 47], [-66, 44], [-80, 26], [-98, 25], [-110, 23], [-116, 31], [-124, 40], [-130, 54], [-150, 59], [-168, 65]],
+  [[-80, 9], [-60, 11], [-35, -5], [-38, -22], [-58, -34], [-70, -50], [-74, -52], [-72, -30], [-78, -14], [-81, -4], [-80, 9]],
+  [[-10, 36], [-2, 48], [3, 51], [-5, 58], [10, 64], [28, 70], [42, 66], [45, 55], [38, 48], [28, 41], [15, 40], [10, 44], [0, 43], [-9, 43], [-10, 36]],
+  [[-17, 14], [-6, 32], [11, 37], [25, 33], [33, 31], [44, 11], [51, 12], [41, -3], [40, -16], [33, -27], [20, -35], [13, -17], [8, 4], [-8, 5], [-17, 14]],
+  [[28, 41], [40, 47], [55, 50], [60, 44], [75, 45], [62, 55], [80, 56], [100, 53], [122, 54], [142, 55], [162, 62], [178, 67], [170, 71], [135, 73], [100, 77], [68, 73], [48, 66], [40, 52], [30, 46], [28, 41]],
+  [[60, 25], [68, 24], [73, 20], [77, 8], [82, 8], [90, 22], [95, 16], [99, 10], [105, 10], [110, 20], [122, 24], [119, 15], [104, 1], [98, 4], [89, 21], [80, 13], [72, 17], [62, 23], [60, 25]],
+  [[100, 53], [120, 50], [135, 45], [142, 40], [130, 33], [122, 30], [120, 40], [110, 42], [100, 45], [100, 53]],
+  [[113, -22], [122, -18], [131, -12], [142, -11], [147, -20], [153, -28], [145, -38], [130, -32], [118, -34], [113, -22]],
+];
+function wmInside(lon: number, lat: number, poly: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if (((yi > lat) !== (yj > lat)) && (lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+const WM_LAND: [number, number][] = (() => {
+  const dots: [number, number][] = [];
+  for (let lon = -178; lon <= 178; lon += 3.4) for (let lat = WM_LAT_BOT + 2; lat <= WM_LAT_TOP - 4; lat += 3.4) {
+    if (WM_CONTINENTS.some((p) => wmInside(lon, lat, p))) dots.push(wmProj(lon, lat));
+  }
+  return dots;
+})();
+
 function WorldDemandMap({ demand }: { demand: { country: string; count: number; lat: number; lon: number }[] }) {
-  const W = 1000, H = 500;
-  const max = Math.max(1, ...demand.map((d) => d.count));
-  const proj = (lat: number, lon: number) => [((lon + 180) / 360) * W, ((90 - lat) / 180) * H];
+  const pts = demand.filter((d) => d.country !== 'Unknown' && d.country !== 'Remote' && !(d.lat === 0 && d.lon === 0));
+  const max = Math.max(1, ...pts.map((d) => d.count));
+  const remote = demand.find((d) => d.country === 'Remote')?.count || 0;
+  const unknown = demand.find((d) => d.country === 'Unknown')?.count || 0;
   const color = (n: number) => { const x = n / max; return x > 0.66 ? 'var(--coral)' : x > 0.33 ? 'var(--orange)' : 'var(--violet)'; };
   return (
     <div className="o-worldmap">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
-        <rect width={W} height={H} rx="14" fill="var(--surface-2)" />
-        {[...Array(11)].map((_, i) => <line key={`v${i}`} x1={(i / 10) * W} y1="0" x2={(i / 10) * W} y2={H} stroke="var(--line)" strokeWidth="1" />)}
-        {[...Array(7)].map((_, i) => <line key={`h${i}`} x1="0" y1={(i / 6) * H} x2={W} y2={(i / 6) * H} stroke="var(--line)" strokeWidth="1" />)}
-        {[['N. America', 40, -100], ['Europe', 50, 15], ['MENA / Gulf', 26, 45], ['S. Asia', 20, 78], ['Africa', 2, 20]].map(([lbl, la, lo]) => { const [x, y] = proj(la as number, lo as number); return <text key={lbl as string} x={x} y={y - 40} textAnchor="middle" fontSize="13" fill="var(--muted-2)">{lbl}</text>; })}
-        {demand.filter((d) => d.country !== 'Unknown' && !(d.lat === 0 && d.lon === 0)).map((d) => { const [x, y] = proj(d.lat, d.lon); const r = 8 + (d.count / max) * 34; return (
-          <g key={d.country}><circle cx={x} cy={y} r={r} fill={color(d.count)} fillOpacity="0.75" stroke="#fff" strokeWidth="1.5" /><text x={x} y={y + 4} textAnchor="middle" fontSize="12" fontWeight="700" fill="#fff">{d.count}</text><text x={x} y={y + r + 14} textAnchor="middle" fontSize="11" fill="var(--text-2)">{d.country}</text></g>
-        ); })}
-        {demand.some((d) => d.country === 'Remote' && d.count) && <g><rect x={W - 150} y={16} width="134" height="34" rx="8" fill="var(--green-soft)" /><text x={W - 83} y={38} textAnchor="middle" fontSize="13" fill="var(--green)" fontWeight="700">🌍 Remote {demand.find((d) => d.country === 'Remote')?.count}</text></g>}
+      <svg viewBox={`0 0 ${WM_W} ${WM_H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="World hiring demand map">
+        <rect width={WM_W} height={WM_H} rx="14" fill="var(--surface-2)" stroke="var(--line)" />
+        {WM_LAND.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={2.3} fill="var(--muted-2)" opacity={0.32} />)}
+        {pts.map((d) => {
+          const [x, y] = wmProj(d.lon, d.lat); const r = 10 + (d.count / max) * 30;
+          return (
+            <g key={d.country}>
+              <circle cx={x} cy={y} r={r} fill={color(d.count)} fillOpacity="0.82" stroke="#fff" strokeWidth="2" />
+              <text x={x} y={y + 4} textAnchor="middle" fontSize="13" fontWeight="800" fill="#fff">{d.count}</text>
+              <text x={x} y={y + r + 15} textAnchor="middle" fontSize="12" fontWeight="600" fill="var(--text)">{d.country}</text>
+            </g>
+          );
+        })}
       </svg>
+      {(remote > 0 || unknown > 0 || pts.length === 0) && (
+        <div className="o-worldmap-legend">
+          {remote > 0 && <span className="o-chip o-chip-green">🌍 {remote} Remote</span>}
+          {unknown > 0 && <span className="o-chip">📍 {unknown} location not specified</span>}
+          {pts.length === 0 && remote === 0 && unknown === 0 && <span className="o-muted">No location data for this search yet.</span>}
+        </div>
+      )}
     </div>
   );
 }
