@@ -2110,14 +2110,14 @@ async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([bytes]).stream().pipeThrough(ds);
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
-/** Extract plain text from a .docx (ZIP) using the central directory + DecompressionStream. */
-async function docxToText(buf: ArrayBuffer): Promise<string> {
+/** Read selected entries out of a .docx (ZIP) via its central directory + DecompressionStream. */
+async function unzipDocx(buf: ArrayBuffer, want: string[]): Promise<Record<string, string>> {
   const bytes = new Uint8Array(buf); const dv = new DataView(buf); const dec = new TextDecoder();
   let p = bytes.length - 22;
   while (p >= 0 && dv.getUint32(p, true) !== 0x06054b50) p--;
   if (p < 0) throw new Error('Not a valid .docx file');
   const count = dv.getUint16(p + 10, true); let off = dv.getUint32(p + 16, true);
-  let xml: Uint8Array | null = null;
+  const out: Record<string, string> = {};
   for (let n = 0; n < count && off + 46 <= bytes.length; n++) {
     const method = dv.getUint16(off + 10, true);
     const compSize = dv.getUint32(off + 20, true);
@@ -2126,20 +2126,74 @@ async function docxToText(buf: ArrayBuffer): Promise<string> {
     const cmtLen = dv.getUint16(off + 32, true);
     const localOff = dv.getUint32(off + 42, true);
     const name = dec.decode(bytes.subarray(off + 46, off + 46 + nameLen));
-    if (name === 'word/document.xml') {
+    if (want.includes(name)) {
       const lNameLen = dv.getUint16(localOff + 26, true);
       const lExtra = dv.getUint16(localOff + 28, true);
       const dataStart = localOff + 30 + lNameLen + lExtra;
       const comp = bytes.subarray(dataStart, dataStart + compSize);
-      xml = method === 0 ? comp : await inflateRaw(comp);
-      break;
+      out[name] = dec.decode(method === 0 ? comp : await inflateRaw(comp));
     }
     off += 46 + nameLen + extraLen + cmtLen;
   }
-  if (!xml) throw new Error('document.xml not found in .docx');
-  let s = dec.decode(xml);
-  s = s.replace(/<w:tab[^>]*\/>/g, '\t').replace(/<w:br[^>]*\/>/g, '\n').replace(/<\/w:p>/g, '\n').replace(/<[^>]+>/g, '');
-  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/\n{3,}/g, '\n\n').trim();
+  return out;
+}
+/** Extract a .docx as Markdown, preserving headings, bold, bullet lists, section separators and hyperlinks. */
+async function docxToMarkdown(buf: ArrayBuffer): Promise<string> {
+  const parts = await unzipDocx(buf, ['word/document.xml', 'word/_rels/document.xml.rels']);
+  const docXml = parts['word/document.xml'];
+  if (!docXml) throw new Error('document.xml not found in .docx');
+  const rels: Record<string, string> = {};
+  if (parts['word/_rels/document.xml.rels']) {
+    const rd = new DOMParser().parseFromString(parts['word/_rels/document.xml.rels'], 'application/xml');
+    for (const r of Array.from(rd.getElementsByTagName('Relationship'))) {
+      if ((r.getAttribute('Type') || '').includes('/hyperlink')) rels[r.getAttribute('Id') || ''] = r.getAttribute('Target') || '';
+    }
+  }
+  const doc = new DOMParser().parseFromString(docXml, 'application/xml');
+  const el = (parent: Element, tag: string) => Array.from(parent.getElementsByTagName(tag));
+  const runMd = (r: Element): string => {
+    let txt = '';
+    for (const c of Array.from(r.childNodes)) { const nn = (c as Element).nodeName; if (nn === 'w:t') txt += c.textContent || ''; else if (nn === 'w:tab') txt += '  '; else if (nn === 'w:br') txt += ' '; }
+    if (!txt) return '';
+    const rpr = r.getElementsByTagName('w:rPr')[0];
+    const bEl = rpr && rpr.getElementsByTagName('w:b')[0];
+    const bold = !!bEl && !['0', 'false', 'none'].includes((bEl.getAttribute('w:val') || '').toLowerCase());
+    return bold ? `**${txt}**` : txt;
+  };
+  const lines: string[] = [];
+  const paras = el(doc.documentElement, 'w:p');
+  for (const par of paras) {
+    const ppr = par.getElementsByTagName('w:pPr')[0];
+    const styleEl = ppr && ppr.getElementsByTagName('w:pStyle')[0];
+    const style = styleEl ? (styleEl.getAttribute('w:val') || '') : '';
+    const isBullet = !!(ppr && ppr.getElementsByTagName('w:numPr')[0]);
+    const hasRule = !!(ppr && ppr.getElementsByTagName('w:pBdr')[0]);
+    // inline content in document order: runs and hyperlinks
+    let content = '';
+    for (const node of Array.from(par.childNodes)) {
+      const nn = (node as Element).nodeName;
+      if (nn === 'w:r') content += runMd(node as Element);
+      else if (nn === 'w:hyperlink') {
+        const inner = el(node as Element, 'w:r').map(runMd).join('').replace(/\*\*/g, '').trim();
+        const id = (node as Element).getAttribute('r:id') || '';
+        const url = rels[id];
+        content += url ? `[${inner}](${url})` : inner;
+      }
+    }
+    content = content.replace(/\*\*\s*\*\*/g, '').trim();
+    const hMatch = /^Heading(\d)/i.exec(style);
+    const wholeBold = content.length > 0 && /^\*\*[^*]+\*\*$/.test(content) && content.length <= 64;
+    if (content) {
+      if (hMatch) lines.push(`${'#'.repeat(Math.min(6, Number(hMatch[1]) + 1))} ${content.replace(/\*\*/g, '')}`);
+      else if (wholeBold) lines.push(`## ${content.replace(/\*\*/g, '')}`);
+      else if (isBullet) lines.push(`- ${content}`);
+      else lines.push(content);
+    } else if (!lines.length || lines[lines.length - 1] !== '') {
+      lines.push('');
+    }
+    if (hasRule) lines.push('---');
+  }
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 const CRC_TABLE = (() => { const tbl = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); tbl[n] = c >>> 0; } return tbl; })();
 function crc32(b: Uint8Array): number { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
@@ -2161,42 +2215,55 @@ function zipStore(files: { name: string; data: Uint8Array }[]): Uint8Array {
   return catBytes([...locals, cd, eocd]);
 }
 function xmlEsc(s: string) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-/** Build a simple, ATS-clean .docx from plain text (UPPERCASE lines become bold headings). */
-function buildDocx(text: string): Uint8Array {
+/** Build a formatted .docx from Markdown: ## headings (bold), - bullets, --- rules, **bold**, and real hyperlinks. */
+function buildDocx(md: string): Uint8Array {
   const enc = new TextEncoder();
-  const paras = text.replace(/\r/g, '').split('\n').map((line) => {
-    if (!line.trim()) return '<w:p/>';
-    const trimmed = line.trim();
-    const heading = trimmed.length >= 3 && trimmed.length <= 40 && trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed) && !/[.:]/.test(trimmed);
-    const rpr = heading ? '<w:rPr><w:b/></w:rPr>' : '';
-    return `<w:p><w:r>${rpr}<w:t xml:space="preserve">${xmlEsc(line)}</w:t></w:r></w:p>`;
+  const linkRels: { id: string; target: string }[] = [];
+  const run = (text: string, opts: { bold?: boolean; link?: boolean } = {}) => text === '' ? '' : `<w:r><w:rPr>${opts.bold ? '<w:b/>' : ''}${opts.link ? '<w:color w:val="0563C1"/><w:u w:val="single"/>' : ''}</w:rPr><w:t xml:space="preserve">${xmlEsc(text)}</w:t></w:r>`;
+  const inline = (s: string, forceBold = false): string => {
+    let out = ''; const linkRe = /\[([^\]]+)\]\((https?:\/\/[^)\s]+|mailto:[^)\s]+)\)/g; let last = 0; let m: RegExpExecArray | null;
+    const emitPlain = (chunk: string) => { for (const p of chunk.split(/(\*\*[^*]+\*\*)/g)) { if (!p) continue; const b = /^\*\*[^*]+\*\*$/.test(p); out += run(b ? p.slice(2, -2) : p, { bold: forceBold || b }); } };
+    while ((m = linkRe.exec(s))) { emitPlain(s.slice(last, m.index)); const id = `rIdL${linkRels.length + 1}`; linkRels.push({ id, target: m[2] }); out += `<w:hyperlink r:id="${id}">${run(m[1], { link: true, bold: forceBold })}</w:hyperlink>`; last = m.index + m[0].length; }
+    emitPlain(s.slice(last));
+    return out || run(' ');
+  };
+  const paras = md.replace(/\r/g, '').split('\n').map((line) => {
+    const s = line.trim();
+    if (!s) return '<w:p/>';
+    if (/^---+$/.test(s)) return '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="C9C9D4"/></w:pBdr></w:pPr></w:p>';
+    const h = /^(#{1,6})\s+(.*)$/.exec(s);
+    if (h) return `<w:p><w:pPr><w:spacing w:before="180" w:after="60"/></w:pPr>${inline(h[2], true)}</w:p>`;
+    const b = /^[-*•]\s+(.*)$/.exec(s);
+    if (b) return `<w:p><w:pPr><w:ind w:left="360" w:hanging="200"/></w:pPr>${run('•  ')}${inline(b[1])}</w:p>`;
+    return `<w:p>${inline(s)}</w:p>`;
   }).join('');
-  const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paras}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr></w:body></w:document>`;
+  const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${paras}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr></w:body></w:document>`;
   const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
-  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+  const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+  const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${linkRels.map((l) => `<Relationship Id="${l.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEsc(l.target)}" TargetMode="External"/>`).join('')}</Relationships>`;
   return zipStore([
     { name: '[Content_Types].xml', data: enc.encode(ct) },
-    { name: '_rels/.rels', data: enc.encode(rels) },
+    { name: '_rels/.rels', data: enc.encode(rootRels) },
     { name: 'word/document.xml', data: enc.encode(doc) },
+    { name: 'word/_rels/document.xml.rels', data: enc.encode(docRels) },
   ]);
 }
 type DiffTok = { t: 'same' | 'add' | 'del'; s: string };
-/** Word-level diff (LCS) between the original and the rewrite. */
-function diffWords(a: string, b: string): DiffTok[] {
-  const split = (s: string) => s.match(/\s+|\S+/g) || [];
-  const A = split(a), B = split(b); const n = A.length, m = B.length;
-  if (n * m > 4_000_000) return [{ t: 'del', s: a }, { t: 'add', s: b }];
+/** Line-level diff (LCS) between the original and the rewrite — keeps each line's Markdown intact so
+ *  the rendered diff shows headings, separators and links, not broken plain text. */
+function diffLines(a: string, b: string): DiffTok[] {
+  const A = a.replace(/\r/g, '').split('\n'), B = b.replace(/\r/g, '').split('\n'); const n = A.length, m = B.length;
+  const norm = (s: string) => s.trim().replace(/\s+/g, ' ');
   const dp: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = norm(A[i]) === norm(B[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
   const out: DiffTok[] = []; let i = 0, j = 0;
-  const push = (tk: DiffTok['t'], s: string) => { const last = out[out.length - 1]; if (last && last.t === tk) last.s += s; else out.push({ t: tk, s }); };
   while (i < n && j < m) {
-    if (A[i] === B[j]) { push('same', A[i]); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { push('del', A[i]); i++; }
-    else { push('add', B[j]); j++; }
+    if (norm(A[i]) === norm(B[j])) { out.push({ t: 'same', s: B[j] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: 'del', s: A[i] }); i++; }
+    else { out.push({ t: 'add', s: B[j] }); j++; }
   }
-  while (i < n) { push('del', A[i]); i++; }
-  while (j < m) { push('add', B[j]); j++; }
+  while (i < n) { out.push({ t: 'del', s: A[i] }); i++; }
+  while (j < m) { out.push({ t: 'add', s: B[j] }); j++; }
   return out;
 }
 
@@ -2227,7 +2294,7 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
     try {
       const lower = f.name.toLowerCase();
       let text = '';
-      if (lower.endsWith('.docx')) text = await docxToText(await f.arrayBuffer());
+      if (lower.endsWith('.docx')) text = await docxToMarkdown(await f.arrayBuffer());
       else if (lower.endsWith('.txt') || lower.endsWith('.md')) text = await f.text();
       else { setMsg({ tone: 'coral', text: t('Upload a .docx or .txt file (for PDF, paste the text).', 'ارفع ملف .docx أو .txt (لملفات PDF الصق النص).') }); return; }
       if (!text.trim()) { setMsg({ tone: 'coral', text: t('Could not read any text from that file.', 'تعذّر قراءة أي نص من الملف.') }); return; }
@@ -2261,9 +2328,9 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
     } catch (e) { setMsg({ tone: 'coral', text: `${t('Could not save .docx', 'تعذّر حفظ ملف .docx')}: ${String(e)}` }); }
     finally { setBusy(''); }
   };
-  const diff = (view === 'diff' && improved) ? diffWords(baseAtStream || resume, improved) : null;
-  const added = diff ? diff.filter((d) => d.t === 'add').reduce((n, d) => n + (d.s.match(/\S+/g)?.length || 0), 0) : 0;
-  const removed = diff ? diff.filter((d) => d.t === 'del').reduce((n, d) => n + (d.s.match(/\S+/g)?.length || 0), 0) : 0;
+  const diff = (view === 'diff' && improved) ? diffLines(baseAtStream || resume, improved) : null;
+  const added = diff ? diff.filter((d) => d.t === 'add' && d.s.trim()).length : 0;
+  const removed = diff ? diff.filter((d) => d.t === 'del' && d.s.trim()).length : 0;
   return (
     <>
       <input ref={fileRef} type="file" accept=".docx,.txt,.md" hidden onChange={(e) => void onUpload(e.target.files?.[0])} />
@@ -2290,12 +2357,13 @@ function ResumePage({ t, ws, reload }: { t: T; ws: WsSummary | null; reload: () 
                 </>}
               </div>
             } />
-          {!streaming && improved && view === 'diff' && <div className="o-diff-legend"><span className="o-diff-add">+{added} {t('added', 'مضاف')}</span><span className="o-diff-del">−{removed} {t('removed', 'محذوف')}</span></div>}
-          <div className="o-resume-view" ref={resultRef}>
-            {streaming || view === 'new' ? <>{improved || (streaming ? '' : '')}{streaming && <span className="o-type-caret" />}</>
-              : view === 'original' ? (baseAtStream || resume)
-              : diff ? diff.map((d, i) => d.t === 'same' ? <span key={i}>{d.s}</span> : d.t === 'add' ? <ins key={i}>{d.s}</ins> : <del key={i}>{d.s}</del>)
-              : improved}
+          {!streaming && improved && view === 'diff' && <div className="o-diff-legend"><span className="o-diff-add">+{added} {t('lines added', 'سطر مضاف')}</span><span className="o-diff-del">−{removed} {t('lines removed', 'سطر محذوف')}</span></div>}
+          <div className={`o-resume-view${view === 'diff' && !streaming ? ' diff' : ' doc'}`} ref={resultRef}>
+            {streaming ? <>{improved}<span className="o-type-caret" /></>
+              : view === 'new' ? <Md text={improved} />
+              : view === 'original' ? <Md text={baseAtStream || resume} />
+              : diff ? diff.map((d, i) => d.s.trim() ? <div key={i} className={`o-diff-line ${d.t}`}><Md text={d.s} compact /></div> : <div key={i} className="o-diff-gap" />)
+              : <Md text={improved} />}
           </div>
         </Card>
       )}
