@@ -179,6 +179,51 @@ def find_jobs(query, target=200, max_calls=None):
     return {"query": query, "count": len(jobs), "jobs": jobs, "demand": demand, "engine": "agent-reach/exa", "fetched_at": now()}
 
 
+def find_contact(company, role=""):
+    """Best-effort discovery of a company's careers/HR contact email via Agent Reach (Exa)."""
+    company = (company or "").strip()
+    if not company:
+        return {"email": "", "candidates": []}
+    role = (role or "").strip()
+    queries = [
+        company + " careers OR jobs OR recruiting HR contact email",
+        '"' + company + '" (careers@ OR jobs@ OR hr@ OR recruiting@ OR talent@ OR hiring@)',
+        company + " apply " + role + " contact email",
+    ]
+    bad = ("noreply", "no-reply", "donotreply", "example.com", "sentry.", "wixpress", "linkedin.com",
+           "indeed.com", "glassdoor", "bayt.com", "wuzzuf", "naukri", "gulftalent", "sentry.io", "@2x", ".png", ".jpg")
+    seen, emails = set(), []
+    for q in queries:
+        try:
+            hits = ch_exa(q, 20)
+        except Exception:  # noqa
+            continue
+        for h in hits:
+            blob = (h.get("title", "") + " " + (h.get("snippet_full") or h.get("snippet") or "") + " " + h.get("url", ""))
+            for m in re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", blob):
+                e = m.lower().strip(".")
+                if e in seen or any(b in e for b in bad):
+                    continue
+                seen.add(e)
+                emails.append(e)
+        if emails:
+            break
+
+    first = re.sub(r"[^a-z0-9]", "", company.lower().split(" ")[0]) if company else ""
+
+    def score(e):
+        local, _, dom = e.partition("@")
+        s = 0
+        for kw in ("careers", "jobs", "recruit", "talent", "hiring", "hr", "apply", "people", "work"):
+            if kw in local:
+                s += 5
+        if first and first in dom:
+            s += 4
+        return s
+    emails.sort(key=score, reverse=True)
+    return {"email": emails[0] if emails else "", "candidates": emails[:8]}
+
+
 def _pct(count, target, calls_done, planned):
     a = count / target if target else 1
     b = calls_done / planned if planned else 1

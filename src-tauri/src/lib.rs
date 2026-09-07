@@ -4,6 +4,7 @@ mod outreach;
 mod workspace;
 mod quota;
 mod jobs;
+mod logs;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -468,6 +469,19 @@ fn jobs_resume_improve(app: tauri::AppHandle, job_id: String, resume: String, ta
 async fn jobs_save_download(app: tauri::AppHandle, name: String, bytes: Vec<u8>) -> Result<String, String> { jobs::save_download(&app, name, bytes) }
 #[tauri::command]
 async fn jobs_analyze(title: String, company: String, snippet: String) -> Result<String, String> { blocking!(jobs::analyze(title, company, snippet)) }
+// ---------------------------------------------------------------- Log Center
+#[tauri::command]
+async fn log_center_list(limit: Option<usize>) -> Result<Vec<logs::LogEntry>, String> { Ok(blocking!(logs::list(limit))) }
+#[tauri::command]
+async fn log_center_add(level: String, kind: String, message: String) -> Result<(), String> { blocking!({ logs::add(&level, &kind, &message); }); Ok(()) }
+#[tauri::command]
+async fn log_center_clear() -> Result<(), String> { blocking!(logs::clear()) }
+#[tauri::command]
+async fn log_center_status() -> Result<serde_json::Value, String> { Ok(blocking!(logs::status())) }
+#[tauri::command]
+async fn log_center_set_forward(url: String, enabled: bool) -> Result<serde_json::Value, String> { blocking!(logs::set_forward(url, enabled)) }
+#[tauri::command]
+async fn log_center_test() -> Result<serde_json::Value, String> { blocking!(logs::test_forward()) }
 #[tauri::command]
 async fn jobs_applications_add_bulk(items: serde_json::Value) -> Result<jobs::JobsState, String> { blocking!(jobs::applications_add_bulk(items)) }
 #[tauri::command]
@@ -475,6 +489,59 @@ async fn jobs_outreach_draft(id: String) -> Result<serde_json::Value, String> { 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn jobs_outreach_send(id: String, subject: String, body: String, resume_docx: Vec<u8>, resume_name: String, cover_docx: Vec<u8>, cover_name: String) -> Result<jobs::JobsState, String> { blocking!(jobs::outreach_send(id, subject, body, resume_docx, resume_name, cover_docx, cover_name)) }
+
+/// Discover a company's careers/HR email through Agent Reach and save it on the application.
+fn bridge_find_contact(company: &str, role: &str) -> Result<String, String> {
+  if company.trim().is_empty() { return Ok(String::new()); }
+  let out = run_bridge(&["jobs-contact", company, role])?;
+  let line = out.lines().rev().find(|l| l.trim_start().starts_with('{')).unwrap_or("{}");
+  let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+  Ok(v.get("email").and_then(|x| x.as_str()).unwrap_or("").to_string())
+}
+#[tauri::command]
+async fn jobs_discover_contact(id: String) -> Result<jobs::JobsState, String> {
+  blocking!({
+    let s = jobs::state();
+    let app = s.applications.iter().find(|a| a.id == id).ok_or("application not found")?.clone();
+    let email = bridge_find_contact(&app.company, &app.role)?;
+    if email.is_empty() { return Err("No contact email found for this company yet.".into()); }
+    jobs::application_update(id, serde_json::json!({ "contact_email": email }))
+  })
+}
+/// Prepare the pipeline in the background: tailor a résumé (from the base résumé) and discover a
+/// contact email for every application still missing either. Progress on `jobs://<job_id>`.
+#[tauri::command]
+fn jobs_auto_prepare(app: tauri::AppHandle, job_id: String) -> Result<(), String> {
+  let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+  job_flags().lock().map_err(|e| e.to_string())?.insert(job_id.clone(), flag.clone());
+  std::thread::spawn(move || { auto_prepare_job(app, job_id.clone(), flag); let _ = job_flags().lock().map(|mut m| m.remove(&job_id)); });
+  Ok(())
+}
+fn auto_prepare_job(app: tauri::AppHandle, job_id: String, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+  use tauri::Emitter;
+  let topic = format!("jobs://{job_id}");
+  let s = jobs::state();
+  let targets: Vec<String> = s.applications.iter()
+    .filter(|a| a.status != "closed" && (a.tailored_resume.trim().is_empty() || a.contact_email.as_deref().map(|e| !e.contains('@')).unwrap_or(true)))
+    .map(|a| a.id.clone()).collect();
+  let total = targets.len();
+  let _ = app.emit(&topic, serde_json::json!({ "type": "start", "job": "autoprep", "total": total, "percent": 0 }));
+  let (mut tailored, mut found, mut failed) = (0usize, 0usize, 0usize);
+  for (i, id) in targets.iter().enumerate() {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) { let _ = app.emit(&topic, serde_json::json!({ "type": "cancelled" })); return; }
+    let Some(a) = jobs::state().applications.iter().find(|x| &x.id == id).cloned() else { continue };
+    let _ = app.emit(&topic, serde_json::json!({ "type": "progress", "index": i + 1, "total": total, "label": a.company, "percent": (i * 100 / total.max(1)) }));
+    if a.tailored_resume.trim().is_empty() { match jobs::tailor(id.clone()) { Ok(_) => tailored += 1, Err(_) => failed += 1 } }
+    if a.contact_email.as_deref().map(|e| !e.contains('@')).unwrap_or(true) {
+      if let Ok(email) = bridge_find_contact(&a.company, &a.role) { if !email.is_empty() { let _ = jobs::application_update(id.clone(), serde_json::json!({ "contact_email": email })); found += 1; } }
+    }
+    let _ = app.emit(&topic, serde_json::json!({ "type": "item", "index": i + 1, "total": total, "percent": ((i + 1) * 100 / total.max(1)) }));
+  }
+  let title = format!("Pipeline prepared: {tailored} tailored, {found} emails found");
+  let _ = workspace::notify(Some(&app), "autoprep", &title, "Résumés tailored to each job and contact emails discovered where public.", Some("outreach"));
+  let _ = workspace::log("outreach".into(), format!("Auto-prepare: {tailored} tailored, {found} emails, {failed} failed"));
+  let _ = app.emit(&topic, serde_json::json!({ "type": "done", "tailored": tailored, "found": found, "failed": failed, "total": total, "percent": 100 }));
+}
 
 #[tauri::command]
 fn provider_env_status() -> serde_json::Value {
@@ -507,7 +574,7 @@ pub fn run() {
       });
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_run_followups, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand, jobs_resume_improve, jobs_save_download, jobs_analyze, jobs_applications_add_bulk, jobs_outreach_draft, jobs_outreach_send])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_run_followups, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand, jobs_resume_improve, jobs_save_download, jobs_analyze, jobs_applications_add_bulk, jobs_outreach_draft, jobs_outreach_send, log_center_list, log_center_add, log_center_clear, log_center_status, log_center_set_forward, log_center_test, jobs_discover_contact, jobs_auto_prepare])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

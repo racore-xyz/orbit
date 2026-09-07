@@ -71,6 +71,15 @@ if __name__ == "__main__":
         res = jobsmod.find_jobs(q, target)
         leads.emit_line({"type": "done", "count": res["count"], "result": res, "percent": 100})
         sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == "jobs-contact":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+        company = sys.argv[2] if len(sys.argv) > 2 else ""
+        role = sys.argv[3] if len(sys.argv) > 3 else ""
+        print(json.dumps(jobsmod.find_contact(company, role)))
+        sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "reddit-stream":
         os.environ.setdefault("PYTHONUTF8", "1")
         try:

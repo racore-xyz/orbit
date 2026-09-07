@@ -93,6 +93,7 @@ pub fn save(mut w: Workspace) -> Result<Workspace, String> {
 }
 
 pub fn log(kind: String, text: String) -> Result<(), String> {
+  crate::logs::add(crate::logs::level_for(&kind), &kind, &text);
   let mut w = load();
   w.activity.push(Activity { at: integrations::now_iso(), kind, text });
   save(w).map(|_| ())
@@ -276,6 +277,7 @@ pub fn demo_clear() -> Result<(), String> {
 
 /// In-app notification (persisted) plus an OS toast when an app handle is available.
 pub fn notify(app: Option<&tauri::AppHandle>, kind: &str, title: &str, text: &str, link: Option<&str>) -> Result<Notification, String> {
+  crate::logs::add(crate::logs::level_for(kind), kind, &format!("{title} — {text}"));
   let mut w = load();
   let n = Notification { id: format!("n-{}", w.notifications.len() + 1 + (parse_secs() % 1000) as usize), at: integrations::now_iso(), kind: kind.into(), title: title.into(), text: text.into(), read: false, link: link.map(|s| s.to_string()) };
   w.notifications.push(n.clone());

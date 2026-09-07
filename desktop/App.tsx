@@ -40,7 +40,7 @@ import {
 type T = (en: string, ar: string) => string;
 let __seq = 0;
 function jobSeq() { __seq += 1; return `${__seq}-${Math.random().toString(36).slice(2, 8)}`; }
-const TAB = { dashboard: 0, leads: 1, research: 2, social: 3, outreach: 4, templates: 5, crm: 6, campaigns: 7, agents: 8, integrations: 9, history: 10, settings: 11 } as const;
+const TAB = { dashboard: 0, leads: 1, research: 2, social: 3, outreach: 4, templates: 5, crm: 6, campaigns: 7, agents: 8, integrations: 9, history: 10, settings: 11, logs: 12 } as const;
 
 export default function DesktopApp() {
   const { dark, toggleDark, lang, toggleLang, rtl, t } = useTheme();
@@ -90,7 +90,7 @@ export default function DesktopApp() {
         { label: t('History', 'السجل'), icon: History },
       ],
     },
-    { label: t('System', 'النظام'), items: [{ label: t('Settings', 'الإعدادات'), icon: Settings2 }] },
+    { label: t('System', 'النظام'), items: [{ label: t('Settings', 'الإعدادات'), icon: Settings2 }, { label: t('Log Center', 'مركز السجلات'), icon: Activity }] },
   ] : [
     {
       label: t('Workspace', 'مساحة العمل'),
@@ -108,9 +108,9 @@ export default function DesktopApp() {
         { label: t('History', 'سجل البحث'), icon: History },
       ],
     },
-    { label: t('System', 'النظام'), items: [{ label: t('Settings', 'الإعدادات'), icon: Settings2 }] },
+    { label: t('System', 'النظام'), items: [{ label: t('Settings', 'الإعدادات'), icon: Settings2 }, { label: t('Log Center', 'مركز السجلات'), icon: Activity }] },
   ];
-  const JT = { dashboard: 0, resume: 1, find: 2, applications: 3, map: 4, agents: 5, integrations: 6, history: 7, settings: 8 } as const;
+  const JT = { dashboard: 0, resume: 1, find: 2, applications: 3, map: 4, agents: 5, integrations: 6, history: 7, settings: 8, logs: 9 } as const;
 
   return (
     <>
@@ -157,6 +157,7 @@ export default function DesktopApp() {
       {tab === TAB.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
       {tab === TAB.history && <HistoryPage t={t} onOpen={openSavedRun} />}
       {tab === TAB.settings && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
+      {tab === TAB.logs && <LogCenterPage t={t} />}
       </>)}
       {jobsMode && tab === JT.dashboard && <JobsDashboard t={t} ws={ws} go={setTab} />}
       {jobsMode && tab === JT.resume && <ResumePage t={t} ws={ws} reload={reloadWs} />}
@@ -167,6 +168,7 @@ export default function DesktopApp() {
       {jobsMode && tab === JT.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
       {jobsMode && tab === JT.history && <HistoryPage t={t} onOpen={openSavedRun} />}
       {jobsMode && tab === JT.settings && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
+      {jobsMode && tab === JT.logs && <LogCenterPage t={t} />}
 
     </AppShell>
       {ws && !ws.workspace.onboarding.completed && <Onboarding t={t} ws={ws} done={reloadWs} />}
@@ -2705,10 +2707,25 @@ function ApplicationsPage({ t, ws }: { t: T; ws: WsSummary | null }) {
   const [filter, setFilter] = useState<'all' | 'saved' | 'applied' | 'replied'>('all');
   const [compose, setCompose] = useState<{ subject: string; body: string } | null>(null);
   const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const [prep, setPrep] = useState<{ percent: number; label: string } | null>(null);
+  const prepRef = useRef<string | null>(null);
+  const prepUn = useRef<UnlistenFn | null>(null);
   const load = async () => { try { setJs(await invoke<JState>('jobs_state')); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
   /* oxlint-disable react/react-compiler */
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { if (prepRef.current) void invoke('job_cancel', { jobId: prepRef.current }); prepUn.current?.(); }, []);
   /* oxlint-enable react/react-compiler */
+  const startAutoPrep = async () => {
+    const id = `autoprep-${Date.now()}`; prepRef.current = id; setMsg(null); setPrep({ percent: 0, label: t('Preparing…', 'جاري التحضير…') });
+    prepUn.current = await listen<{ type: string; percent?: number; label?: string; tailored?: number; found?: number }>(`jobs://${id}`, (ev) => {
+      const e = ev.payload;
+      if (e.type === 'progress' || e.type === 'item' || e.type === 'start') setPrep({ percent: e.percent ?? 0, label: e.label || t('Preparing…', 'جاري التحضير…') });
+      else if (e.type === 'done') { setPrep(null); prepRef.current = null; prepUn.current?.(); prepUn.current = null; void load(); setMsg({ tone: 'green', text: t(`Pipeline prepared — ${e.tailored ?? 0} résumés tailored, ${e.found ?? 0} contact emails found.`, `تم تحضير القائمة — ${e.tailored ?? 0} سيرة مخصّصة، ${e.found ?? 0} بريد تواصل.`) }); }
+      else if (e.type === 'cancelled') { setPrep(null); prepRef.current = null; prepUn.current?.(); prepUn.current = null; void load(); }
+    });
+    try { await invoke('jobs_auto_prepare', { jobId: id }); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); setPrep(null); prepRef.current = null; }
+  };
+  const findEmail = (a: JApp) => act('email-' + a.id, async () => { setJs(await invoke<JState>('jobs_discover_contact', { id: a.id })); return t('Contact email discovered.', 'تم اكتشاف بريد التواصل.'); });
   const act = async (k: string, fn: () => Promise<string>) => { setBusy(k); setMsg(null); try { setMsg({ tone: 'green', text: await fn() }); await load(); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } finally { setBusy(''); } };
   const apps = js?.applications || [];
   const app = apps.find((a) => a.id === sel) || null;
@@ -2733,7 +2750,8 @@ function ApplicationsPage({ t, ws }: { t: T; ws: WsSummary | null }) {
   });
   return (
     <>
-      <PageHead eyebrow={t('Application inbox', 'صندوق التقديمات')} title={t('Applications', 'التقديمات')} spark={false} sub={t('A WhatsApp-style inbox for your job outreach: draft, attach your résumé + cover letter, send, and track follow-ups per company.', 'صندوق يشبه واتساب لتواصل التوظيف: اكتب، أرفق سيرتك وخطابك، أرسل، وتابع لكل شركة.')} actions={<div className="o-flex"><label className="o-flex" style={{ fontSize: 12 }}>{t('Follow-ups', 'متابعات')}<input className="o-input" style={{ height: 30, width: 50 }} type="number" min={0} max={5} defaultValue={js?.settings.follow_up_max ?? 2} onBlur={(e) => setCfg(Number(e.target.value) || 0, js?.settings.follow_up_days ?? 4)} /></label><label className="o-flex" style={{ fontSize: 12 }}>{t('every', 'كل')}<input className="o-input" style={{ height: 30, width: 50 }} type="number" min={1} defaultValue={js?.settings.follow_up_days ?? 4} onBlur={(e) => setCfg(js?.settings.follow_up_max ?? 2, Number(e.target.value) || 4)} />{t('days', 'يوم')}</label></div>} />
+      <PageHead eyebrow={t('Application inbox', 'صندوق التقديمات')} title={t('Applications', 'التقديمات')} spark={false} sub={t('A WhatsApp-style inbox for your job outreach: draft, attach your résumé + cover letter, send, and track follow-ups per company.', 'صندوق يشبه واتساب لتواصل التوظيف: اكتب، أرفق سيرتك وخطابك، أرسل، وتابع لكل شركة.')} actions={<div className="o-flex">{apps.length > 0 && <Btn variant="ai" size="sm" icon={Sparkles} onClick={startAutoPrep} disabled={!!prep}>{prep ? t('Preparing…', 'جاري التحضير…') : t('Auto-prepare pipeline', 'تحضير القائمة تلقائياً')}</Btn>}<label className="o-flex" style={{ fontSize: 12 }}>{t('Follow-ups', 'متابعات')}<input className="o-input" style={{ height: 30, width: 50 }} type="number" min={0} max={5} defaultValue={js?.settings.follow_up_max ?? 2} onBlur={(e) => setCfg(Number(e.target.value) || 0, js?.settings.follow_up_days ?? 4)} /></label><label className="o-flex" style={{ fontSize: 12 }}>{t('every', 'كل')}<input className="o-input" style={{ height: 30, width: 50 }} type="number" min={1} defaultValue={js?.settings.follow_up_days ?? 4} onBlur={(e) => setCfg(js?.settings.follow_up_max ?? 2, Number(e.target.value) || 4)} />{t('days', 'يوم')}</label></div>} />
+      {prep && <div className="o-loader"><div className="o-loader-head"><span className="o-spinner" /><b>{prep.percent}%</b><span className="o-loader-label">{t('Tailoring résumés + finding contact emails', 'تخصيص السير + إيجاد بريد التواصل')} · {prep.label}</span></div><div className="o-progress lg"><i style={{ width: `${prep.percent}%` }} /></div></div>}
       <div className="o-grid o-grid-4">
         <StatCard icon={Briefcase} label={t('In pipeline', 'في القائمة')} value={String(stats.total)} trend={null} tone="violet" />
         <StatCard icon={Send} label={t('Applied', 'تم التقديم')} value={String(stats.applied)} trend={null} tone="sky" />
@@ -2772,7 +2790,10 @@ function ApplicationsPage({ t, ws }: { t: T; ws: WsSummary | null }) {
                     <button className="o-more" aria-label="Delete" onClick={() => act('del', async () => { setJs(await invoke<JState>('jobs_application_delete', { id: app.id })); setSel(null); return t('Removed', 'تمت الإزالة'); })}><Trash2 size={14} /></button>
                   </div>
                 </div>
-                <label className="o-field o-mt" style={{ maxWidth: 420 }}>{t('Contact email (hiring / careers address)', 'بريد التواصل (عنوان التوظيف)')}<input type="email" value={app.contact_email || ''} onChange={(e) => patchContact(app.id, e.target.value)} onBlur={(e) => void invoke('jobs_application_update', { id: app.id, patch: { contact_email: e.target.value } })} placeholder="careers@company.com" /></label>
+                <div className="o-flex o-mt" style={{ alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                  <label className="o-field" style={{ flex: 1, minWidth: 260 }}>{t('Contact email (hiring / careers address)', 'بريد التواصل (عنوان التوظيف)')}<input type="email" value={app.contact_email || ''} onChange={(e) => patchContact(app.id, e.target.value)} onBlur={(e) => void invoke('jobs_application_update', { id: app.id, patch: { contact_email: e.target.value } })} placeholder="careers@company.com" /></label>
+                  <Btn variant="secondary" size="sm" icon={Search} onClick={() => findEmail(app)} disabled={!!busy}>{busy === 'email-' + app.id ? t('Searching…', 'جاري البحث…') : t('Find email', 'ابحث عن البريد')}</Btn>
+                </div>
                 {app.follow_ups.length > 0 && <div className="o-flex o-mt" style={{ flexWrap: 'wrap' }}>{app.follow_ups.map((f, i) => <Chip key={i} tone={f.done ? 'green' : f.at <= nowIso ? 'orange' : 'neutral'}>{t(`Follow-up ${i + 1}`, `متابعة ${i + 1}`)} · {new Date(f.at).toLocaleDateString()}{f.done ? ' ✓' : ''}</Chip>)}</div>}
                 <div className="o-appthread o-mt">
                   {(app.messages || []).length ? (app.messages || []).map((m) => (
@@ -2807,6 +2828,56 @@ function ApplicationsPage({ t, ws }: { t: T; ws: WsSummary | null }) {
           </section>
         </div>
       ) : <Card><EmptyState icon={Briefcase} title={t('No applications yet', 'لا توجد تقديمات بعد')} text={t('Go to Find Jobs, select postings and add them to your pipeline.', 'اذهب لابحث عن وظائف، اختر إعلانات وأضفها لقائمتك.')} /></Card>}
+    </>
+  );
+}
+
+type LogEntry = { id: string; at: string; level: string; kind: string; message: string };
+function LogCenterPage({ t }: { t: T }) {
+  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [status, setStatus] = useState<{ forward_url: string; forward_enabled: boolean; count: number }>({ forward_url: '', forward_enabled: false, count: 0 });
+  const [url, setUrl] = useState('');
+  const [level, setLevel] = useState<'all' | 'info' | 'success' | 'warn' | 'error'>('all');
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
+  const load = async () => { try { const [e, s] = await Promise.all([invoke<LogEntry[]>('log_center_list', { limit: 500 }), invoke<{ forward_url: string; forward_enabled: boolean; count: number }>('log_center_status')]); setEntries(e); setStatus(s); setUrl(s.forward_url); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
+  /* oxlint-disable react/react-compiler */
+  useEffect(() => { void load(); const id = window.setInterval(() => { void load(); }, 15000); return () => window.clearInterval(id); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /* oxlint-enable react/react-compiler */
+  const saveForward = (enabled: boolean) => { setBusy('save'); setMsg(null); void invoke<{ forward_url: string; forward_enabled: boolean }>('log_center_set_forward', { url, enabled }).then((s) => { setStatus((p) => ({ ...p, ...s })); setMsg({ tone: 'green', text: t('Forwarding settings saved', 'تم حفظ إعدادات التوجيه') }); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
+  const test = () => { setBusy('test'); setMsg(null); void invoke<{ ok: boolean; status: number }>('log_center_test').then((r) => { setMsg({ tone: r.ok ? 'green' : 'coral', text: t(`Test event forwarded — HTTP ${r.status}`, `تم توجيه حدث تجريبي — HTTP ${r.status}`) }); void load(); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
+  const clear = () => { if (!window.confirm(t('Clear all log entries?', 'مسح كل السجلات؟'))) return; void invoke('log_center_clear').then(load); };
+  const shown = entries.filter((e) => level === 'all' || e.level === level);
+  const tone = (l: string): Tone => l === 'error' ? 'coral' : l === 'warn' ? 'orange' : l === 'success' ? 'green' : 'neutral';
+  return (
+    <>
+      <PageHead eyebrow={t('Everything the app does', 'كل ما يفعله التطبيق')} title={t('Log Center', 'مركز السجلات')} sub={t('One live stream of every event — searches, sends, follow-ups, bounces, errors. Forward it to any URL to collect the data on your own website.', 'دفق حيّ لكل حدث — عمليات بحث، إرسال، متابعات، ارتدادات، أخطاء. وجّهه لأي رابط لتجميع البيانات على موقعك.')} actions={<div className="o-flex"><Btn variant="secondary" size="sm" icon={RefreshCw} onClick={load}>{t('Refresh', 'تحديث')}</Btn><Btn variant="ghost" size="sm" icon={Trash2} onClick={clear}>{t('Clear', 'مسح')}</Btn></div>} />
+      {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} /><span style={{ wordBreak: 'break-all' }}>{msg.text}</span></div>}
+      <Card>
+        <CardHead title={t('Forward to a website', 'التوجيه إلى موقع')} sub={t('Every new entry is POSTed as JSON to this endpoint (best-effort).', 'كل سجل جديد يُرسَل كـ JSON إلى هذا الرابط (بأفضل جهد).')} action={<span className={`o-dot ${status.forward_enabled ? 'green' : 'neutral'}`} title={status.forward_enabled ? 'Forwarding on' : 'Off'} />} />
+        <div className="o-flex" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <input className="o-input" style={{ flex: 1, minWidth: 260 }} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://your-site.com/api/orbit-logs" />
+          <Btn variant="secondary" onClick={() => saveForward(true)} disabled={!!busy || !url.startsWith('http')}>{t('Save & enable', 'حفظ وتفعيل')}</Btn>
+          {status.forward_enabled && <Btn variant="ghost" onClick={() => saveForward(false)} disabled={!!busy}>{t('Disable', 'تعطيل')}</Btn>}
+          <Btn onClick={test} disabled={!!busy || !url.startsWith('http')}>{busy === 'test' ? t('Testing…', 'جاري الاختبار…') : t('Send test event', 'أرسل حدث اختبار')}</Btn>
+        </div>
+        <p className="o-note">{t('Payload: { id, at, level, kind, message }. Point it at a Google Apps Script, a webhook, or your own API.', 'الحمولة: { id, at, level, kind, message }. وجّهه إلى Google Apps Script أو webhook أو API خاص بك.')}</p>
+      </Card>
+      <Card>
+        <CardHead title={t(`${shown.length} events`, `${shown.length} حدث`)} action={<div className="o-seg">{(['all', 'info', 'success', 'warn', 'error'] as const).map((l) => <button key={l} className={level === l ? 'active' : ''} onClick={() => setLevel(l)}>{l === 'all' ? t('All', 'الكل') : l}</button>)}</div>} />
+        {shown.length ? (
+          <div className="o-logs">
+            {shown.map((e) => (
+              <div key={e.id} className="o-logline">
+                <span className="o-log-time">{new Date(e.at).toLocaleString()}</span>
+                <Chip tone={tone(e.level)}>{e.level}</Chip>
+                <span className="o-log-kind">{e.kind}</span>
+                <span className="o-log-msg">{e.message}</span>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState icon={Activity} title={t('No events yet', 'لا أحداث بعد')} text={t('Use the app — searches, sends and follow-ups stream in here.', 'استخدم التطبيق — عمليات البحث والإرسال والمتابعات تتدفق هنا.')} />}
+      </Card>
     </>
   );
 }
