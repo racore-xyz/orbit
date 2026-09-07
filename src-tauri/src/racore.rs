@@ -45,6 +45,9 @@ pub fn device_code() -> String {
   id
 }
 
+/// The active license code (empty if not linked). Used to tag outgoing desktop events.
+pub fn license_code() -> String { load().license_code }
+
 fn mask(code: &str) -> String {
   if code.len() > 12 { format!("{}…{}", &code[..8], &code[code.len() - 4..]) } else { code.to_string() }
 }
@@ -68,7 +71,7 @@ pub fn login(license_code: String) -> Result<serde_json::Value, String> {
   let r = client().post(format!("{API}/auth/login")).json(&serde_json::json!({ "device_code": dc, "license_code": code })).send().map_err(|e| format!("Network error: {e}"))?;
   let status = r.status().as_u16();
   match status {
-    401 => return Err("License or device code is not valid.".into()),
+    401 | 404 => return Err("License or device code is not valid.".into()),
     403 => return Err("Maximum number of devices reached for this license.".into()),
     429 => return Err("Too many requests — wait a minute and try again.".into()),
     s if s >= 500 => return Err("Temporary server error — try again shortly.".into()),
@@ -97,6 +100,15 @@ pub fn status() -> serde_json::Value {
     "api": API,
     "is_default": crate::llm::settings().provider.as_deref() == Some("racore"),
   })
+}
+
+/// Called by the AI layer when the gateway rejects the session (expired/revoked): drop the token
+/// so the UI returns to the activation screen. This gateway signals it with 401/403/404.
+pub fn on_auth_failure() {
+  if crate::llm::get_key("racore").is_some() {
+    let _ = crate::llm::set_key("racore", "");
+    crate::logs::add("warn", "license", "Racore session expired or revoked — re-activate your license under Integrations.");
+  }
 }
 
 /// Clear the session (e.g. after a 401) so the user can re-enter a license.

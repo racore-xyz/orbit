@@ -2915,10 +2915,14 @@ function LogCenterPage({ t }: { t: T }) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<{ forward_url: string; forward_enabled: boolean; count: number }>({ forward_url: '', forward_enabled: false, count: 0 });
   const [url, setUrl] = useState('');
+  const [ev, setEv] = useState<{ url: string; enabled: boolean; pending: number; sent: number }>({ url: '', enabled: false, pending: 0, sent: 0 });
+  const [evUrl, setEvUrl] = useState('');
   const [level, setLevel] = useState<'all' | 'info' | 'success' | 'warn' | 'error'>('all');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
-  const load = async () => { try { const [e, s] = await Promise.all([invoke<LogEntry[]>('log_center_list', { limit: 500 }), invoke<{ forward_url: string; forward_enabled: boolean; count: number }>('log_center_status')]); setEntries(e); setStatus(s); setUrl(s.forward_url); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
+  const load = async () => { try { const [e, s, ev2] = await Promise.all([invoke<LogEntry[]>('log_center_list', { limit: 500 }), invoke<{ forward_url: string; forward_enabled: boolean; count: number }>('log_center_status'), invoke<{ url: string; enabled: boolean; pending: number; sent: number }>('events_status')]); setEntries(e); setStatus(s); setUrl(s.forward_url); setEv(ev2); setEvUrl(ev2.url); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
+  const saveEvents = (enabled: boolean) => { setBusy('ev'); setMsg(null); void invoke<{ url: string; enabled: boolean; pending: number }>('events_set_url', { url: evUrl, enabled }).then(() => { void load(); setMsg({ tone: 'green', text: t('Event backend saved', 'تم حفظ خادم الأحداث') }); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
+  const flushEvents = () => { setBusy('flush'); setMsg(null); void invoke<{ sent: number; pending: number }>('events_flush').then((r) => { void load(); setMsg({ tone: 'green', text: t(`Flushed ${r.sent} events · ${r.pending} pending`, `تم إرسال ${r.sent} حدث · ${r.pending} قيد الانتظار`) }); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
   /* oxlint-disable react/react-compiler */
   useEffect(() => { void load(); const id = window.setInterval(() => { void load(); }, 15000); return () => window.clearInterval(id); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   /* oxlint-enable react/react-compiler */
@@ -2947,6 +2951,16 @@ function LogCenterPage({ t }: { t: T }) {
           <Btn onClick={test} disabled={!!busy || !url.startsWith('http')}>{busy === 'test' ? t('Testing…', 'جاري الاختبار…') : t('Send test event', 'أرسل حدث اختبار')}</Btn>
         </div>
         <p className="o-note">{t('Payload: { id, at, level, kind, message }. Point it at a Google Apps Script, a webhook, or your own API.', 'الحمولة: { id, at, level, kind, message }. وجّهه إلى Google Apps Script أو webhook أو API خاص بك.')}</p>
+      </Card>
+      <Card>
+        <CardHead title={t('Desktop events → your backend', 'أحداث التطبيق → خادمك')} sub={t('Buffered device events (app_started, …) are batched and POSTed as { events: [...] } to a backend you control, which forwards them to Racore with the secret. The webhook secret never lives here.', 'أحداث الجهاز (app_started …) تُجمَّع وتُرسَل كـ { events: [...] } إلى خادم تتحكم فيه، الذي يمرّرها إلى Racore بالمفتاح السري. المفتاح السري لا يوجد هنا.')} action={<div className="o-flex" style={{ fontSize: 12 }}><Chip tone={ev.enabled ? 'green' : 'neutral'}>{ev.pending} {t('queued', 'بالانتظار')}</Chip><Chip tone="sky">{ev.sent} {t('sent', 'مُرسل')}</Chip></div>} />
+        <div className="o-flex" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <input className="o-input" style={{ flex: 1, minWidth: 260 }} value={evUrl} onChange={(e) => setEvUrl(e.target.value)} placeholder="https://your-backend.com/desktop-events" />
+          <Btn variant="secondary" onClick={() => saveEvents(true)} disabled={!!busy || !evUrl.startsWith('http')}>{t('Save & enable', 'حفظ وتفعيل')}</Btn>
+          {ev.enabled && <Btn variant="ghost" onClick={() => saveEvents(false)} disabled={!!busy}>{t('Disable', 'تعطيل')}</Btn>}
+          <Btn onClick={flushEvents} disabled={!!busy || !ev.enabled}>{busy === 'flush' ? t('Flushing…', 'إرسال…') : t('Flush now', 'إرسال الآن')}</Btn>
+        </div>
+        <p className="o-note">{t('Each event carries device_id, license, event_type, at and app_version. Max 1000 per POST; buffered while offline.', 'كل حدث يحمل device_id وlicense وevent_type وat وapp_version. حد أقصى 1000 لكل POST؛ يُخزَّن أثناء عدم الاتصال.')}</p>
       </Card>
       <Card>
         <CardHead title={t(`${shown.length} events`, `${shown.length} حدث`)} action={<div className="o-seg">{(['all', 'info', 'success', 'warn', 'error'] as const).map((l) => <button key={l} className={level === l ? 'active' : ''} onClick={() => setLevel(l)}>{l === 'all' ? t('All', 'الكل') : l}</button>)}</div>} />

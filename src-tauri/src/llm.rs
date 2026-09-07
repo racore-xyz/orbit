@@ -146,6 +146,7 @@ pub fn complete_stream<F: FnMut(&str)>(provider: Option<String>, model: Option<S
     }
   };
   let status = resp.status().as_u16();
+  if provider == "racore" && (status == 401 || status == 403 || status == 404) { crate::racore::on_auth_failure(); return Err("Racore license session expired or revoked. Re-activate it under Integrations.".to_string()); }
   if status >= 400 {
     let t = resp.text().unwrap_or_default();
     let tag = if status == 429 || status >= 500 { "rate limit/overloaded" } else { "error" };
@@ -189,9 +190,12 @@ fn complete_once(c: &reqwest::blocking::Client, provider: &str, info: &ProviderI
     }
     _ => {
       let base = match provider { "groq" => "https://api.groq.com/openai/v1", "mistral" => "https://api.mistral.ai/v1", "openrouter" => "https://openrouter.ai/api/v1", "racore" => "https://api.racore.xyz", _ => "https://api.openai.com/v1" };
-      let v = c.post(format!("{base}/chat/completions")).bearer_auth(key)
+      let resp = c.post(format!("{base}/chat/completions")).bearer_auth(key)
         .json(&serde_json::json!({ "model": model, "max_tokens": max_tokens, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }] }))
-        .send().map_err(|e| e.to_string())?; let v = status_json(v)?;
+        .send().map_err(|e| e.to_string())?;
+      let st = resp.status().as_u16();
+      if provider == "racore" && (st == 401 || st == 403 || st == 404) { crate::racore::on_auth_failure(); return Err("Racore license session expired or revoked. Re-activate it under Integrations.".to_string()); }
+      let v = status_json(resp)?;
       if let Some(err) = v.get("error") { return Err(format!("{}: {}", info.name, err.get("message").and_then(|m| m.as_str()).unwrap_or("error"))); }
       v.pointer("/choices/0/message/content").and_then(|t| t.as_str()).unwrap_or("").to_string()
     }
