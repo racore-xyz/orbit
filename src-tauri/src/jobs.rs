@@ -12,6 +12,9 @@ use tauri::Emitter;
 pub struct FollowUp { pub at: String, pub done: bool }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
+pub struct AppMsg { pub id: String, pub direction: String, pub subject: String, pub body: String, pub at: String, pub attachments: Vec<String> }
+
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Application {
   pub id: String,
   pub company: String,
@@ -29,6 +32,8 @@ pub struct Application {
   pub follow_ups: Vec<FollowUp>,
   pub notes: String,
   pub created_at: String,
+  #[serde(default)]
+  pub messages: Vec<AppMsg>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -68,8 +73,70 @@ pub fn application_add(company: String, role: String, location: String, country:
   if s.applications.iter().any(|a| a.url == url && !url.is_empty()) { return Err("This job is already in your pipeline".into()); }
   s.applications.insert(0, Application {
     id, company, role, location, country, url, source, status: "saved".into(), job_desc, contact_email,
-    tailored_resume: String::new(), cover_letter: String::new(), applied_at: None, follow_ups: Vec::new(), notes: String::new(), created_at: integrations::now_iso(),
+    tailored_resume: String::new(), cover_letter: String::new(), applied_at: None, follow_ups: Vec::new(), notes: String::new(), created_at: integrations::now_iso(), messages: Vec::new(),
   });
+  save(s)
+}
+
+/// Add many postings at once (Select all → pipeline). Skips URLs already in the pipeline.
+pub fn applications_add_bulk(items: serde_json::Value) -> Result<JobsState, String> {
+  let mut s = load();
+  let mut n = 0usize;
+  for it in items.as_array().cloned().unwrap_or_default() {
+    let url = it.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if !url.is_empty() && s.applications.iter().any(|a| a.url == url) { continue; }
+    let g = |k: &str| it.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    s.applications.insert(0, Application {
+      id: format!("app-{}-{n}", integrations::now_iso().replace(['-', ':', 'T', 'Z'], "")),
+      company: g("company"), role: g("role"), location: g("location"), country: g("country"), url, source: g("source"),
+      status: "saved".into(), job_desc: g("snippet"), contact_email: it.get("contact_email").and_then(|v| v.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string()),
+      tailored_resume: String::new(), cover_letter: String::new(), applied_at: None, follow_ups: Vec::new(), notes: String::new(), created_at: integrations::now_iso(), messages: Vec::new(),
+    });
+    n += 1;
+  }
+  save(s)
+}
+
+/// Draft a concise application email (subject + body) for one posting, from the cover letter / base résumé.
+pub fn outreach_draft(id: String) -> Result<serde_json::Value, String> {
+  let s = load();
+  let app = s.applications.iter().find(|a| a.id == id).ok_or("application not found")?.clone();
+  let ws = crate::workspace::load().profile;
+  let lang = if ws.language == "ar" { "Arabic" } else { "English" };
+  let base = if !app.cover_letter.trim().is_empty() { app.cover_letter.clone() } else if !ws.offer.trim().is_empty() { ws.offer.clone() } else { app.job_desc.clone() };
+  let system = format!("You write a concise, warm job-application email in {lang} from the candidate to the hiring team. 4-6 short sentences: greet, name the role you're applying for, 2-3 lines on why you fit (from the material), note that your résumé and cover letter are attached, and end with a clear ask for a conversation. Plain text only. Output exactly:\nSubject: <subject>\n\n<body>");
+  let user = format!("CANDIDATE: {name}\nROLE: {role} at {company} ({loc})\n\nMATERIAL:\n{base}", name = ws.name, role = app.role, company = app.company, loc = app.location);
+  let text = crate::llm::complete(None, None, system, user, 550)?;
+  let (subject, body) = crate::outreach::split_subject(&text);
+  let subject = if subject.trim().is_empty() { format!("Application: {} — {}", app.role, ws.name) } else { subject };
+  Ok(serde_json::json!({ "subject": subject, "body": body }))
+}
+
+/// Send the application email with résumé + cover-letter attachments, record it and mark applied.
+#[allow(clippy::too_many_arguments)]
+pub fn outreach_send(id: String, subject: String, body: String, resume_docx: Vec<u8>, resume_name: String, cover_docx: Vec<u8>, cover_name: String) -> Result<JobsState, String> {
+  let s = load();
+  let app = s.applications.iter().find(|a| a.id == id).ok_or("application not found")?.clone();
+  let to = app.contact_email.clone().filter(|e| e.contains('@')).ok_or("Add a contact email for this application first (the hiring/careers address).")?;
+  crate::quota::gate_send()?;
+  let mb = integrations::next_mailbox()?;
+  let mut atts: Vec<(String, Vec<u8>)> = Vec::new();
+  if !resume_docx.is_empty() { atts.push((if resume_name.trim().is_empty() { "resume.docx".into() } else { resume_name }, resume_docx)); }
+  if !cover_docx.is_empty() { atts.push((if cover_name.trim().is_empty() { "cover_letter.docx".into() } else { cover_name }, cover_docx)); }
+  let names: Vec<String> = atts.iter().map(|(n, _)| n.clone()).collect();
+  integrations::send_via_mailbox_attach(&mb.id, to.clone(), subject.clone(), body.clone(), None, atts)?;
+  crate::quota::record_send();
+  let now = integrations::now_iso();
+  let mut s = load();
+  let (max, days) = (s.settings.follow_up_max, s.settings.follow_up_days);
+  let start = crate::outreach::parse_iso(&now).unwrap_or(0);
+  if let Some(a) = s.applications.iter_mut().find(|a| a.id == id) {
+    a.messages.push(AppMsg { id: format!("m-{}", a.messages.len() + 1), direction: "out".into(), subject, body, at: now.clone(), attachments: names });
+    a.status = "applied".into();
+    a.applied_at = Some(now.clone());
+    if a.follow_ups.is_empty() { a.follow_ups = (1..=max).map(|k| FollowUp { at: integrations::iso_from_secs(start + (k * days) as u64 * 86400), done: false }).collect(); }
+  }
+  let _ = crate::workspace::log("outreach".into(), format!("Application email sent to {to}"));
   save(s)
 }
 

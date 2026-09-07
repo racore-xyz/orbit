@@ -168,6 +168,7 @@ pub fn sync_replies(app: Option<tauri::AppHandle>) -> Result<serde_json::Value, 
   let since = st.threads.iter().flat_map(|t| t.messages.iter().filter(|m| m.direction == "out").map(|m| m.at.clone())).min().unwrap_or_else(|| integrations::now_iso());
   let inbox = integrations::fetch_inbox_since(&since)?;
   let mut found = 0;
+  let mut bounced = 0;
   let mut newly: Vec<usize> = Vec::new();
   for msg in &inbox {
     let from_email = msg.get("from_email").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -175,6 +176,31 @@ pub fn sync_replies(app: Option<tauri::AppHandle>) -> Result<serde_json::Value, 
     let refs = msg.get("refs").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let subj = msg.get("subject").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
     let msg_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let body_raw = msg.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let body_l = body_raw.to_lowercase();
+    // Delivery Status Notification (Failure) / bounce — never treat as a reply; mark the thread bounced.
+    let is_bounce = from_email.starts_with("mailer-daemon") || from_email.starts_with("postmaster")
+      || subj.contains("delivery status notification") || subj.contains("undeliverable") || subj.contains("undelivered mail")
+      || subj.contains("mail delivery failed") || subj.contains("failure notice") || subj.contains("returned mail")
+      || subj.contains("delivery has failed") || subj.contains("delivery incomplete");
+    if is_bounce {
+      let bidx = st.threads.iter().position(|t| refs.contains(&format!("orbit-{}-", t.id)))
+        .or_else(|| st.threads.iter().position(|t| !t.email.is_empty() && body_l.contains(&t.email.to_lowercase())));
+      if let Some(bidx) = bidx {
+        let t = &mut st.threads[bidx];
+        if t.messages.iter().any(|m| m.external_id.as_deref().map(|e| e.contains(&msg_id)).unwrap_or(false)) { continue; }
+        t.messages.push(Msg { id: format!("m-{}", t.messages.len() + 1), direction: "in".into(),
+          subject: format!("\u{26A0} Delivery failed: {}", msg.get("subject").and_then(|v| v.as_str()).unwrap_or("")),
+          body: body_raw.chars().take(800).collect(), at: msg.get("at").and_then(|v| v.as_str()).unwrap_or("").into(),
+          provider: None, step: 0, external_id: Some(msg_id.clone()), template_id: None, variant_id: None });
+        t.status = "bounced".into();
+        t.next_followup_at = None;
+        t.unread = true;
+        t.last_activity = integrations::now_iso();
+        bounced += 1;
+      }
+      continue;
+    }
     // find the best thread: 1) our Message-ID threaded in refs, 2) exact from address,
     // 3) same domain AND the reply subject contains our first subject core.
     let idx = st.threads.iter().position(|t| refs.contains(&format!("orbit-{}-", t.id)))
@@ -235,7 +261,12 @@ pub fn sync_replies(app: Option<tauri::AppHandle>) -> Result<serde_json::Value, 
     let _ = crate::workspace::notify(app.as_ref(), "reply", &title, &text, Some("outreach"));
     let _ = crate::workspace::log("outreach".into(), format!("{found} replies synced ({auto_sent} auto-answered, {drafted} drafted)"));
   }
-  Ok(serde_json::json!({ "found": found, "auto_sent": auto_sent, "drafted": drafted, "errors": [] }))
+  if bounced > 0 {
+    let title = format!("{bounced} email{} bounced", if bounced == 1 { "" } else { "s" });
+    let _ = crate::workspace::notify(app.as_ref(), "bounce", &title, "A delivery failure came back — those contacts are marked bounced, not replied. Check the address.", Some("outreach"));
+    let _ = crate::workspace::log("outreach".into(), format!("{bounced} delivery failures marked as bounced"));
+  }
+  Ok(serde_json::json!({ "found": found, "auto_sent": auto_sent, "drafted": drafted, "bounced": bounced, "errors": [] }))
 }
 
 /// Draft a negotiation reply to the latest inbound message, in the user's style, using full context.
@@ -335,7 +366,7 @@ pub fn record_edit(draft: String, final_text: String) -> Result<(), String> {
   save(st).map(|_| ())
 }
 
-fn split_subject(text: &str) -> (String, String) {
+pub fn split_subject(text: &str) -> (String, String) {
   let mut lines = text.lines();
   let mut subject = String::new();
   let mut rest = Vec::new();

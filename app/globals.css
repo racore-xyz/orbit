@@ -744,6 +744,17 @@ label.o-row:hover { background: var(--surface-2); }
 .o-jobs-table .o-table th, .o-jobs-table .o-table td { padding: 8px 8px; white-space: nowrap; }
 .o-jobs-table .o-table th:first-child, .o-jobs-table .o-table td:first-child { padding-inline-end: 2px; }
 .o-clickrow { cursor: pointer; }
+.o-row-sel, .o-jobs-table .o-table tr.o-row-sel td { background: var(--primary-soft); }
+/* Application inbox thread + compose */
+.o-appthread { display: flex; flex-direction: column; gap: 10px; }
+.o-appmsg { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; max-width: 82%; }
+.o-appmsg.out { align-self: flex-end; background: var(--primary-soft); }
+.o-appmsg.in { align-self: flex-start; background: var(--surface-2); }
+.o-appmsg b { font-size: 13px; display: block; }
+.o-appmsg-body { font-size: 12.5px; white-space: pre-wrap; color: var(--text-2); margin: 4px 0; line-height: 1.55; }
+.o-appmsg small { font-size: 10px; }
+.o-compose { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; background: var(--surface-2); }
+.o-compose textarea { resize: vertical; font-family: var(--font-sans); }
 .o-clickrow:hover { background: var(--surface-2); }
 .o-clickrow .o-link { color: var(--primary); }
 .o-jobcard { background: var(--surface); border-radius: var(--radius-lg); width: min(860px, 94vw); max-height: 90vh; overflow: auto; box-shadow: 0 24px 60px rgba(20, 20, 40, 0.28); }

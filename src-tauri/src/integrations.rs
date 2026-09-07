@@ -299,6 +299,34 @@ pub fn send_via_mailbox(mailbox_id: &str, to: String, subject: String, body: Str
   Ok(serde_json::json!({ "ok": true, "response": r.code().to_string(), "from": from, "to": to, "mailbox": mailbox_id }))
 }
 
+/// Like send_via_mailbox but with file attachments (e.g. a résumé and cover letter .docx).
+pub fn send_via_mailbox_attach(mailbox_id: &str, to: String, subject: String, body: String, message_id: Option<String>, attachments: Vec<(String, Vec<u8>)>) -> Result<serde_json::Value, String> {
+  use lettre::{message::{header::ContentType, Attachment, MultiPart, SinglePart}, Message, Transport};
+  if attachments.is_empty() { return send_via_mailbox(mailbox_id, to, subject, body, message_id); }
+  let mut cfg = load();
+  let day = today();
+  let idx = cfg.mailboxes.iter().position(|m| m.id == mailbox_id).ok_or("mailbox not found")?;
+  let pw = secret_get(&format!("mailbox-{mailbox_id}-smtp")).ok_or("mailbox password missing")?;
+  let (from, m) = { let m = &cfg.mailboxes[idx]; (m.from.clone(), m.clone()) };
+  let mut mb_builder = Message::builder().from(from.parse().map_err(|e| format!("from: {e}"))?).to(to.parse().map_err(|e| format!("to: {e}"))?).subject(subject);
+  if let Some(mid) = message_id { mb_builder = mb_builder.message_id(Some(mid)); }
+  let mut multipart = MultiPart::mixed().singlepart(SinglePart::plain(body));
+  for (name, bytes) in attachments {
+    let ct = if name.to_lowercase().ends_with(".docx") { ContentType::parse("application/vnd.openxmlformats-officedocument.wordprocessingml.document").unwrap_or(ContentType::parse("application/octet-stream").unwrap()) }
+      else if name.to_lowercase().ends_with(".pdf") { ContentType::parse("application/pdf").unwrap_or(ContentType::parse("application/octet-stream").unwrap()) }
+      else { ContentType::parse("application/octet-stream").unwrap() };
+    multipart = multipart.singlepart(Attachment::new(name).body(bytes, ct));
+  }
+  let msg = mb_builder.multipart(multipart).map_err(|e| e.to_string())?;
+  let r = mailbox_transport(&m, &pw)?.send(&msg).map_err(|e| format!("SMTP send failed: {e}"))?;
+  let mb = &mut cfg.mailboxes[idx];
+  if mb.sent_day != day { mb.sent_day = day; mb.sent_today = 0; }
+  mb.sent_today += 1;
+  mb.last_send_at = Some(now_iso());
+  save(&cfg)?;
+  Ok(serde_json::json!({ "ok": true, "response": r.code().to_string(), "from": from, "to": to, "mailbox": mailbox_id }))
+}
+
 // ---------------------------------------------------------------- IMAP (reply detection for SMTP accounts)
 pub fn imap_save(host: String, port: u16, username: String, password: String) -> Result<serde_json::Value, String> {
   if host.trim().is_empty() || username.trim().is_empty() { return Err("IMAP host and username are required".into()); }
