@@ -15,14 +15,26 @@ export type Series = { key: string; label: string; tone: ToneKey };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function OrbitTooltip({ active, payload, label, series }: any) {
   if (!active || !payload?.length) return null;
+  // Pie/Donut: the slice name is on the payload item (nameKey), not `label`. Show name, value and %.
+  const isPie = label == null && (series?.length ?? 0) === 0 && payload[0]?.name != null;
+  if (isPie) {
+    const p = payload[0];
+    const pct = typeof p.percent === 'number' ? ` · ${Math.round(p.percent * 100)}%` : '';
+    return (
+      <div className="o-tooltip">
+        <b>{p.name}</b>
+        <span style={{ color: p.payload?.fill ?? p.color }}>{p.value}{pct}</span>
+      </div>
+    );
+  }
   return (
     <div className="o-tooltip">
-      <b>{label}</b>
-      {payload.map((p: { dataKey: string; value: number; color: string }) => {
+      {label != null && <b>{label}</b>}
+      {payload.map((p: { dataKey: string; name?: string; value: number; color: string }) => {
         const s = series?.find((x: Series) => x.key === p.dataKey);
         return (
-          <span key={p.dataKey} style={{ color: p.color }}>
-            {s?.label ?? p.dataKey} : {p.value}
+          <span key={p.dataKey ?? p.name} style={{ color: p.color }}>
+            {s?.label ?? p.name ?? p.dataKey} : {p.value}
           </span>
         );
       })}
