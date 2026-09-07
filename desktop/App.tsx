@@ -182,7 +182,7 @@ type DashData = {
   distribution: { name: string; value: number }[];
   templates: { label: string; sent: number; replied: number; rate: number }[];
   recent: { id: string; name: string; company?: string | null; status: string; sent: number; replies: number; last: string; pending: boolean }[];
-  insights: { best_hour?: { hour: number; rate: number; sent: number } | null; followup_share?: number | null; best_template?: { label: string; rate: number; sent: number } | null; pending_drafts: number; drafts: number; due: number };
+  insights: { best_hour?: { hour: number; rate: number; sent: number } | null; followup_share?: number | null; best_template?: { label: string; rate: number; sent: number } | null; pending_drafts: number; drafts: number; due: number; bounced?: number; failure_rate?: number };
 };
 
 function Dashboard({ t, go, ws, onAutodraft, jobRunning }: { t: T; go: (i: number) => void; ws: WsSummary | null; onAutodraft: () => void; jobRunning: boolean }) {
@@ -264,6 +264,7 @@ function Dashboard({ t, go, ws, onAutodraft, jobRunning }: { t: T; go: (i: numbe
           <Insight icon={Clock} title={t('Best Send Time', 'أفضل وقت للإرسال')} text={d?.insights.best_hour ? t(`${String(d.insights.best_hour.hour).padStart(2, '0')}:00 UTC shows ${d.insights.best_hour.rate}% replies (${d.insights.best_hour.sent} sent)`, `${String(d.insights.best_hour.hour).padStart(2, '0')}:00 UTC يعطي ${d.insights.best_hour.rate}% ردود (${d.insights.best_hour.sent} مُرسل)`) : t('Needs 3+ sends in one hour slot to compare.', 'يحتاج 3+ إرسالات في نفس الساعة للمقارنة.')} />
           <Insight icon={Lightbulb} title={t('Best Template', 'أفضل قالب')} text={d?.insights.best_template ? `${d.insights.best_template.label} · ${d.insights.best_template.rate}%` : t('Send with templates to rank them by replies.', 'أرسل بالقوالب لترتيبها حسب الردود.')} />
           <Insight icon={RefreshCw} title={t('Follow-ups matter', 'المتابعات تهم')} text={d?.insights.followup_share != null ? t(`${d.insights.followup_share}% of replies came after a follow-up`, `${d.insights.followup_share}% من الردود جاءت بعد متابعة`) : t(`${d?.insights.due || 0} follow-ups due · ${d?.insights.pending_drafts || 0} drafts ready`, `${d?.insights.due || 0} متابعة مستحقة · ${d?.insights.pending_drafts || 0} مسودة جاهزة`)} />
+          <Insight icon={Shield} tone={(d?.insights.failure_rate || 0) > 0 ? 'coral' : undefined} title={t('Delivery failure rate', 'معدل فشل التسليم')} text={d?.insights.bounced ? t(`${d.insights.failure_rate}% bounced · ${d.insights.bounced} address${d.insights.bounced === 1 ? '' : 'es'} failed. Follow-ups on those were cancelled.`, `${d.insights.failure_rate}% ارتد · ${d.insights.bounced} عنوان فشل. أُلغيت متابعاتها.`) : t('0% — no delivery failures. Bounced emails are excluded from follow-ups automatically.', '0% — لا فشل تسليم. الرسائل المرتدة تُستبعد من المتابعة تلقائياً.')} />
           <div className="o-mt"><Btn variant="ai" icon={Sparkles} block onClick={() => go(TAB.outreach)}>{t('Open Outreach Assistant', 'فتح مساعد التواصل')}</Btn></div>
         </Card>
       </div>

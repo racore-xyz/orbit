@@ -680,6 +680,10 @@ pub fn dashboard() -> serde_json::Value {
   let total_replied = st.threads.iter().filter(|t| t.status == "replied").count();
   let pending = st.threads.iter().filter(|t| t.pending_draft.is_some()).count();
   let drafts = st.threads.iter().filter(|t| t.status == "draft").count();
+  // delivery failure (bounce) rate = bounced threads / threads we actually sent to
+  let bounced = st.threads.iter().filter(|t| t.status == "bounced").count();
+  let sent_threads = st.threads.iter().filter(|t| t.messages.iter().any(|m| m.direction == "out")).count();
+  let failure_rate = rate(bounced, sent_threads);
   serde_json::json!({
     "stats": {
       "contacts": { "value": st.threads.len(), "trend": pct(contacts30, contacts_prev) },
@@ -691,7 +695,7 @@ pub fn dashboard() -> serde_json::Value {
     "distribution": dist.iter().map(|(k, v)| serde_json::json!({ "name": k, "value": v })).collect::<Vec<_>>(),
     "templates": perf.iter().take(3).cloned().collect::<Vec<_>>(),
     "recent": recent_json,
-    "insights": { "best_hour": best_hour, "followup_share": if total_replied > 0 { Some(rate(fu_replies, total_replied)) } else { None }, "best_template": perf.first().cloned(), "pending_drafts": pending, "drafts": drafts, "due": due(&st).len() },
+    "insights": { "best_hour": best_hour, "followup_share": if total_replied > 0 { Some(rate(fu_replies, total_replied)) } else { None }, "best_template": perf.first().cloned(), "pending_drafts": pending, "drafts": drafts, "due": due(&st).len(), "bounced": bounced, "failure_rate": failure_rate },
   })
 }
 

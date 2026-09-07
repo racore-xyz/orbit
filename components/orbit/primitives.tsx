@@ -176,10 +176,10 @@ export function Tile({ title, big, left, right, progress }: { title: string; big
   );
 }
 
-export function Insight({ icon, title, text }: { icon: Icon; title: string; text: string }) {
+export function Insight({ icon, title, text, tone }: { icon: Icon; title: string; text: string; tone?: 'coral' | 'green' | 'orange' }) {
   return (
     <div className="o-insight">
-      <IconTile icon={icon} />
+      <IconTile icon={icon} tone={tone} />
       <div>
         <b>{title}</b>
         <p>{text}</p>
