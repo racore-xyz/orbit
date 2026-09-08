@@ -40,7 +40,7 @@ import {
 type T = (en: string, ar: string) => string;
 let __seq = 0;
 function jobSeq() { __seq += 1; return `${__seq}-${Math.random().toString(36).slice(2, 8)}`; }
-const TAB = { dashboard: 0, leads: 1, research: 2, social: 3, outreach: 4, templates: 5, crm: 6, campaigns: 7, agents: 8, integrations: 9, history: 10, settings: 11, logs: 12 } as const;
+const TAB = { dashboard: 0, leads: 1, research: 2, social: 3, outreach: 4, templates: 5, crm: 6, campaigns: 7, integrations: 8, history: 9, settings: 10, logs: 11 } as const;
 
 export default function DesktopApp() {
   const { dark, toggleDark, lang, toggleLang, rtl, t } = useTheme();
@@ -85,7 +85,6 @@ export default function DesktopApp() {
         { label: t('Find Jobs', 'ابحث عن وظائف'), icon: Briefcase },
         { label: t('Applications', 'التقديمات'), icon: Send },
         { label: t('Job Map', 'خريطة الوظائف'), icon: Globe2 },
-        { label: t('AI Agents', 'وكلاء الذكاء الاصطناعي'), icon: Bot },
         { label: t('Integrations', 'التكاملات'), icon: Plug },
         { label: t('History', 'السجل'), icon: History },
       ],
@@ -103,14 +102,13 @@ export default function DesktopApp() {
         { label: t('Templates', 'القوالب'), icon: FileText },
         { label: t('CRM', 'إدارة العملاء'), icon: Users },
         { label: t('Campaigns', 'الحملات'), icon: Send },
-        { label: t('AI Agents', 'وكلاء الذكاء الاصطناعي'), icon: Bot },
         { label: t('Integrations', 'التكاملات'), icon: Plug },
         { label: t('History', 'سجل البحث'), icon: History },
       ],
     },
     { label: t('System', 'النظام'), items: [{ label: t('Settings', 'الإعدادات'), icon: Settings2 }, { label: t('Log Center', 'مركز السجلات'), icon: Activity }] },
   ];
-  const JT = { dashboard: 0, resume: 1, find: 2, applications: 3, map: 4, agents: 5, integrations: 6, history: 7, settings: 8, logs: 9 } as const;
+  const JT = { dashboard: 0, resume: 1, find: 2, applications: 3, map: 4, integrations: 5, history: 6, settings: 7, logs: 8 } as const;
 
   return (
     <>
@@ -133,8 +131,6 @@ export default function DesktopApp() {
           <LangToggle lang={lang} onToggle={toggleLang} />
         </>
       }
-      aiLabel={t('Get AI Insight', 'رؤية ذكية')}
-      onAi={() => setTab(TAB.agents)}
       notifications={ws?.workspace.notifications || []}
       unread={unread}
       onNotificationsOpen={() => { void invoke('notifications_mark', { ids: [], read: true }).then(() => reloadWs()); }}
@@ -153,7 +149,6 @@ export default function DesktopApp() {
       {tab === TAB.templates && <TemplatesPage t={t} />}
       {tab === TAB.research && <LeadFinder t={t} mode="research" openRunId={openRun} onOpened={() => setOpenRun(null)} onOutreach={sendToOutreach} />}
       {tab === TAB.social && <SocialPage t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} />}
-      {tab === TAB.agents && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
       {tab === TAB.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
       {tab === TAB.history && <HistoryPage t={t} onOpen={openSavedRun} />}
       {tab === TAB.settings && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
@@ -164,7 +159,6 @@ export default function DesktopApp() {
       {jobsMode && tab === JT.find && <JobFinder t={t} openRunId={openRun} onOpened={() => setOpenRun(null)} />}
       {jobsMode && tab === JT.applications && <ApplicationsPage t={t} ws={ws} />}
       {jobsMode && tab === JT.map && <JobMapPage t={t} />}
-      {jobsMode && tab === JT.agents && <Agents t={t} agentic={agentic} setAgentic={(v) => { setAgentic(v); localStorage.setItem('orbit.agenticMode', v ? 'on' : 'off'); }} />}
       {jobsMode && tab === JT.integrations && <Integrations t={t} connected={connected} setConnected={setConnected} />}
       {jobsMode && tab === JT.history && <HistoryPage t={t} onOpen={openSavedRun} />}
       {jobsMode && tab === JT.settings && <WorkspacePage t={t} ws={ws} reload={reloadWs} />}
@@ -281,7 +275,7 @@ function Dashboard({ t, go, ws, onAutodraft, jobRunning }: { t: T; go: (i: numbe
           <CardHead title={t('Getting started', 'البدء')} sub={t('Workspace setup', 'إعداد مساحة العمل')} action={<Chip tone={ws && ws.progress.percent === 100 ? 'green' : 'violet'} pill>{ws?.progress.percent ?? 0}%</Chip>} />
           <Progress value={ws?.progress.percent ?? 0} />
           <div className="o-mt">
-            {(ws?.progress.checklist || []).map((c) => { const goFor: Record<string, number> = { profile: TAB.settings, email: TAB.integrations, inbox: TAB.integrations, llm: TAB.agents, style: TAB.outreach, leads: TAB.leads, research: TAB.research, outreach: TAB.outreach, reply: TAB.outreach }; return (
+            {(ws?.progress.checklist || []).map((c) => { const goFor: Record<string, number> = { profile: TAB.settings, email: TAB.integrations, inbox: TAB.integrations, llm: TAB.integrations, style: TAB.outreach, leads: TAB.leads, research: TAB.research, outreach: TAB.outreach, reply: TAB.outreach }; return (
               <button key={c.id} className={`o-check${c.done ? ' done' : ''}`} onClick={() => go(goFor[c.id] ?? 0)}><i>{c.done ? '✓' : ''}</i><span>{c.label}</span><ChevronRight size={14} /></button>
             ); })}
           </div>
@@ -1991,7 +1985,7 @@ function QuotaCard({ t }: { t: T }) {
       <div className="o-flex o-mt"><label className="o-flex" title={t('Emergency-only global ceiling. Leave off for mailbox-based capacity.', 'سقف طوارئ عالمي فقط. اتركه متوقفاً لاستخدام سعة الصناديق.')}>{t('Legacy global kill-switch', 'مفتاح الإيقاف العالمي القديم')} <Switch on={l.smtp_global_kill_switch} onChange={(v) => setL({ ...l, smtp_global_kill_switch: v })} label="Global kill switch" /></label>
         <Btn size="sm" onClick={async () => { try { await invoke('quota_set', { limits: l }); setMsg(''); await load(); } catch (e) { setMsg(String(e)); } }}>{t('Save limits', 'حفظ الحدود')}</Btn>
         <Btn size="sm" variant="ghost" onClick={() => setL(q.defaults)}>{t('Reset to defaults', 'إعادة الافتراضيات')}</Btn>
-        <span className="o-note" style={{ margin: 0 }}>{t('LLM requests per minute are set per provider under AI Agents.', 'طلبات النماذج في الدقيقة تُضبط لكل مزوّد تحت وكلاء الذكاء الاصطناعي.')}</span>
+        <span className="o-note" style={{ margin: 0 }}>{t('LLM requests per minute are set per provider under Integrations.', 'طلبات النماذج في الدقيقة تُضبط لكل مزوّد تحت التكاملات.')}</span>
       </div>
     </Card>
   );
