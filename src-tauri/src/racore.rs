@@ -15,10 +15,15 @@ pub struct LicenseState {
   #[serde(default)]
   pub license_code: String,
   #[serde(default)]
+  pub license_id: String,
+  #[serde(default)]
   pub expires_at: Option<String>,
   #[serde(default)]
   pub linked_at: Option<String>,
 }
+
+/// The license UUID captured at login (empty if the gateway didn't return one). Used for the webhook.
+pub fn license_id() -> String { load().license_id }
 
 fn path() -> std::path::PathBuf {
   let base = std::env::var("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
@@ -82,8 +87,12 @@ pub fn login(license_code: String) -> Result<serde_json::Value, String> {
   let token = v.get("access_token").and_then(|x| x.as_str()).unwrap_or("").to_string();
   if token.is_empty() { return Err("No access token returned by the gateway.".into()); }
   crate::llm::set_key("racore", &token)?;
+  // Capture a license UUID if the gateway returns one (several likely field names/paths).
+  let license_id = ["license_id", "licenseId", "id"].iter().find_map(|k| v.get(k).and_then(|x| x.as_str()))
+    .or_else(|| v.pointer("/license/id").and_then(|x| x.as_str()))
+    .unwrap_or("").to_string();
   let expires_at = verify(code.clone()).ok().and_then(|vv| vv.get("expires_at").cloned()).and_then(|x| x.as_str().map(|s| s.to_string()));
-  save(&LicenseState { license_code: code, expires_at, linked_at: Some(crate::integrations::now_iso()) })?;
+  save(&LicenseState { license_code: code, license_id, expires_at, linked_at: Some(crate::integrations::now_iso()) })?;
   let _ = crate::llm::set_default("racore", "gemini-2.5-flash");
   crate::logs::add("success", "license", "Device linked to the Racore license — AI now routes through the gateway.");
   Ok(serde_json::json!({ "ok": true, "expires_in": v.get("expires_in") }))

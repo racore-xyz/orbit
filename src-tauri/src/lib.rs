@@ -507,6 +507,8 @@ async fn events_flush() -> Result<serde_json::Value, String> { blocking!(events:
 #[tauri::command]
 async fn events_track(event_type: String, data: serde_json::Value) -> Result<(), String> { blocking!({ events::track(&event_type, data); }); Ok(()) }
 #[tauri::command]
+async fn events_set_racore(secret: String, enabled: bool, forward_logs: bool) -> Result<serde_json::Value, String> { blocking!(events::set_racore(secret, enabled, forward_logs)) }
+#[tauri::command]
 async fn jobs_applications_add_bulk(items: serde_json::Value) -> Result<jobs::JobsState, String> { blocking!(jobs::applications_add_bulk(items)) }
 #[tauri::command]
 async fn jobs_outreach_draft(id: String) -> Result<serde_json::Value, String> { blocking!(jobs::outreach_draft(id)) }
@@ -639,6 +641,23 @@ pub fn cli_maybe() -> bool {
     match racore::login(code) { Ok(v) => println!("activate: {v}"), Err(e) => { println!("activate error: {e}"); std::process::exit(1); } }
     handled = true;
   }
+  if let Some(i) = args.iter().position(|a| a == "--set-webhook") {
+    let secret = args.get(i + 1).cloned().unwrap_or_default();
+    match events::set_racore(secret, true, true) { Ok(v) => println!("set-webhook: {v}"), Err(e) => { println!("set-webhook error: {e}"); std::process::exit(1); } }
+    handled = true;
+  }
+  if args.iter().any(|a| a == "--device-id") {
+    println!("{}", racore::device_code());
+    handled = true;
+  }
+  if args.iter().any(|a| a == "--webhook-test") {
+    println!("{}", events::webhook_probe());
+    handled = true;
+  }
+  if args.iter().any(|a| a == "--flush-events") {
+    match events::flush() { Ok(v) => println!("flush-events: {v}"), Err(e) => { println!("flush-events error: {e}"); std::process::exit(1); } }
+    handled = true;
+  }
   if args.iter().any(|a| a == "--test-ai") {
     match llm::complete(Some("racore".into()), None, "Reply with the single word OK.".into(), "ping".into(), 16) {
       Ok(r) => println!("test-ai: {}", r.replace('\n', " ")),
@@ -658,6 +677,7 @@ pub fn run() {
       // user is on another tab or never opens Outreach. Every ~10 min it pulls replies (so we
       // never follow up someone who answered) and, when auto follow-up is on, sends the due ones.
       let handle = app.handle().clone();
+      events::bootstrap(); // enable Racore webhook forwarding automatically (no user setup)
       events::track("app_started", serde_json::json!({}));
       std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(25));
@@ -675,7 +695,7 @@ pub fn run() {
       });
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_run_followups, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand, jobs_resume_improve, jobs_save_download, jobs_analyze, jobs_applications_add_bulk, jobs_outreach_draft, jobs_outreach_send, log_center_list, log_center_add, log_center_clear, log_center_status, log_center_set_forward, log_center_test, jobs_discover_contact, jobs_auto_prepare, jobs_application_add_verified, jobs_add_verified, racore_status, racore_verify, racore_login, racore_logout, racore_test, racore_early_access, events_status, events_set_url, events_flush, events_track])
+    .invoke_handler(tauri::generate_handler![app_status, bridge_doctor, bridge_setup, agent_reach_search, agent_reach_leads, agent_reach_research, bridge_enrich, agent_reach_stream, bridge_enrich_stream, social_reddit_stream, bridge_cancel, run_save, run_list, run_get, run_delete, agent_reach_doctor, provider_env_status, integrations_status, smtp_save, smtp_send, smtp_disconnect, webhook_save, webhook_send, webhook_disconnect, llm_status, llm_set_key, llm_set_default, llm_test, llm_complete, outreach_state, outreach_create_campaign, outreach_save, outreach_send, outreach_fill, outreach_generate_variants, outreach_placeholders, outreach_fill_step, outreach_followup_action, outreach_sync, outreach_draft_reply, outreach_send_reply, outreach_draft, outreach_learn_style, outreach_record_edit, imap_save, imap_disconnect, workspace_get, workspace_save, workspace_log, workspace_delete, workspace_export, workspace_demo_seed, workspace_demo_clear, outreach_autodraft_start, outreach_campaign_run, outreach_run_followups, outreach_campaign_delete, job_cancel, notify, notifications_mark, dashboard_data, llm_set_rate_limit, exa_set_key, exa_status, quota_status, quota_set, mailbox_add, mailbox_add_gmail, mailbox_remove, mailbox_toggle, mailbox_set_cap, mailbox_test, jobs_search_stream, jobs_state, jobs_save, jobs_application_add, jobs_application_update, jobs_application_delete, jobs_application_mark_applied, jobs_set_settings, jobs_review_resume, jobs_tailor, jobs_demand, jobs_resume_improve, jobs_save_download, jobs_analyze, jobs_applications_add_bulk, jobs_outreach_draft, jobs_outreach_send, log_center_list, log_center_add, log_center_clear, log_center_status, log_center_set_forward, log_center_test, jobs_discover_contact, jobs_auto_prepare, jobs_application_add_verified, jobs_add_verified, racore_status, racore_verify, racore_login, racore_logout, racore_test, racore_early_access, events_status, events_set_url, events_flush, events_track, events_set_racore])
     .run(tauri::generate_context!())
     .expect("error while running orbit growth os");
 }

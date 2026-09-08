@@ -2906,26 +2906,21 @@ type LogEntry = { id: string; at: string; level: string; kind: string; message: 
 function LogCenterPage({ t }: { t: T }) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<{ forward_url: string; forward_enabled: boolean; count: number }>({ forward_url: '', forward_enabled: false, count: 0 });
-  const [url, setUrl] = useState('');
-  const [ev, setEv] = useState<{ url: string; enabled: boolean; pending: number; sent: number }>({ url: '', enabled: false, pending: 0, sent: 0 });
-  const [evUrl, setEvUrl] = useState('');
+  const [ev, setEv] = useState<{ url: string; enabled: boolean; target: string; forward_logs: boolean; has_secret: boolean; pending: number; sent: number }>({ url: '', enabled: false, target: 'url', forward_logs: false, has_secret: false, pending: 0, sent: 0 });
   const [level, setLevel] = useState<'all' | 'info' | 'success' | 'warn' | 'error'>('all');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ tone: 'green' | 'coral'; text: string } | null>(null);
-  const load = async () => { try { const [e, s, ev2] = await Promise.all([invoke<LogEntry[]>('log_center_list', { limit: 500 }), invoke<{ forward_url: string; forward_enabled: boolean; count: number }>('log_center_status'), invoke<{ url: string; enabled: boolean; pending: number; sent: number }>('events_status')]); setEntries(e); setStatus(s); setUrl(s.forward_url); setEv(ev2); setEvUrl(ev2.url); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
-  const saveEvents = (enabled: boolean) => { setBusy('ev'); setMsg(null); void invoke<{ url: string; enabled: boolean; pending: number }>('events_set_url', { url: evUrl, enabled }).then(() => { void load(); setMsg({ tone: 'green', text: t('Event backend saved', 'تم حفظ خادم الأحداث') }); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
-  const flushEvents = () => { setBusy('flush'); setMsg(null); void invoke<{ sent: number; pending: number }>('events_flush').then((r) => { void load(); setMsg({ tone: 'green', text: t(`Flushed ${r.sent} events · ${r.pending} pending`, `تم إرسال ${r.sent} حدث · ${r.pending} قيد الانتظار`) }); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
+  const load = async () => { try { const [e, s, ev2] = await Promise.all([invoke<LogEntry[]>('log_center_list', { limit: 500 }), invoke<{ forward_url: string; forward_enabled: boolean; count: number }>('log_center_status'), invoke<typeof ev>('events_status')]); setEntries(e); setStatus(s); setEv(ev2); } catch (e) { setMsg({ tone: 'coral', text: String(e) }); } };
   /* oxlint-disable react/react-compiler */
   useEffect(() => { void load(); const id = window.setInterval(() => { void load(); }, 15000); return () => window.clearInterval(id); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   /* oxlint-enable react/react-compiler */
-  const saveForward = (enabled: boolean) => { setBusy('save'); setMsg(null); void invoke<{ forward_url: string; forward_enabled: boolean }>('log_center_set_forward', { url, enabled }).then((s) => { setStatus((p) => ({ ...p, ...s })); setMsg({ tone: 'green', text: t('Forwarding settings saved', 'تم حفظ إعدادات التوجيه') }); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
-  const test = () => { setBusy('test'); setMsg(null); void invoke<{ ok: boolean; status: number }>('log_center_test').then((r) => { setMsg({ tone: r.ok ? 'green' : 'coral', text: t(`Test event forwarded — HTTP ${r.status}`, `تم توجيه حدث تجريبي — HTTP ${r.status}`) }); void load(); }).catch((e) => setMsg({ tone: 'coral', text: String(e) })).finally(() => setBusy('')); };
   const clear = () => { if (!window.confirm(t('Clear all log entries?', 'مسح كل السجلات؟'))) return; void invoke('log_center_clear').then(load); };
   const shown = entries.filter((e) => level === 'all' || e.level === level);
   const tone = (l: string): Tone => l === 'error' ? 'coral' : l === 'warn' ? 'orange' : l === 'success' ? 'green' : 'neutral';
+  const forwarding = ev.enabled && ev.target === 'racore';
   return (
     <>
-      <PageHead eyebrow={t('Everything the app does', 'كل ما يفعله التطبيق')} title={t('Log Center', 'مركز السجلات')} sub={t('One live stream of every event — searches, sends, follow-ups, bounces, errors. Forward it to any URL to collect the data on your own website.', 'دفق حيّ لكل حدث — عمليات بحث، إرسال، متابعات، ارتدادات، أخطاء. وجّهه لأي رابط لتجميع البيانات على موقعك.')} actions={<div className="o-flex"><Btn variant="secondary" size="sm" icon={RefreshCw} onClick={load}>{t('Refresh', 'تحديث')}</Btn><Btn variant="ghost" size="sm" icon={Trash2} onClick={clear}>{t('Clear', 'مسح')}</Btn></div>} />
+      <PageHead eyebrow={t('Everything the app does', 'كل ما يفعله التطبيق')} title={t('Log Center', 'مركز السجلات')} sub={t('One live stream of every event — searches, sends, follow-ups, bounces, errors. Streamed to the Racore analytics endpoint automatically.', 'دفق حيّ لكل حدث — عمليات بحث، إرسال، متابعات، ارتدادات، أخطاء. يُرسَل إلى تحليلات Racore تلقائياً.')} actions={<div className="o-flex"><Btn variant="secondary" size="sm" icon={RefreshCw} onClick={load}>{t('Refresh', 'تحديث')}</Btn><Btn variant="ghost" size="sm" icon={Trash2} onClick={clear}>{t('Clear', 'مسح')}</Btn></div>} />
       {msg && <div className={`o-result${msg.tone === 'coral' ? ' error' : ''}`}><Check size={16} /><span style={{ wordBreak: 'break-all' }}>{msg.text}</span></div>}
       <div className="o-grid o-grid-4">
         <StatCard icon={Shield} label={t('Issues', 'مشاكل')} value={String(entries.filter((e) => e.level === 'error').length)} trend={null} tone="coral" />
@@ -2935,24 +2930,10 @@ function LogCenterPage({ t }: { t: T }) {
       </div>
       {entries.some((e) => e.level === 'error') && level !== 'error' && <button className="o-result error" style={{ width: '100%', textAlign: 'start', cursor: 'pointer' }} onClick={() => setLevel('error')}><Shield size={16} />{t(`${entries.filter((e) => e.level === 'error').length} issue(s) need attention — click to view only errors.`, `${entries.filter((e) => e.level === 'error').length} مشكلة تحتاج انتباه — اضغط لعرض الأخطاء فقط.`)}</button>}
       <Card>
-        <CardHead title={t('Forward to a website', 'التوجيه إلى موقع')} sub={t('Every new entry is POSTed as JSON to this endpoint (best-effort).', 'كل سجل جديد يُرسَل كـ JSON إلى هذا الرابط (بأفضل جهد).')} action={<span className={`o-dot ${status.forward_enabled ? 'green' : 'neutral'}`} title={status.forward_enabled ? 'Forwarding on' : 'Off'} />} />
-        <div className="o-flex" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <input className="o-input" style={{ flex: 1, minWidth: 260 }} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://your-site.com/api/orbit-logs" />
-          <Btn variant="secondary" onClick={() => saveForward(true)} disabled={!!busy || !url.startsWith('http')}>{t('Save & enable', 'حفظ وتفعيل')}</Btn>
-          {status.forward_enabled && <Btn variant="ghost" onClick={() => saveForward(false)} disabled={!!busy}>{t('Disable', 'تعطيل')}</Btn>}
-          <Btn onClick={test} disabled={!!busy || !url.startsWith('http')}>{busy === 'test' ? t('Testing…', 'جاري الاختبار…') : t('Send test event', 'أرسل حدث اختبار')}</Btn>
-        </div>
-        <p className="o-note">{t('Payload: { id, at, level, kind, message }. Point it at a Google Apps Script, a webhook, or your own API.', 'الحمولة: { id, at, level, kind, message }. وجّهه إلى Google Apps Script أو webhook أو API خاص بك.')}</p>
-      </Card>
-      <Card>
-        <CardHead title={t('Desktop events → your backend', 'أحداث التطبيق → خادمك')} sub={t('Buffered device events (app_started, …) are batched and POSTed as { events: [...] } to a backend you control, which forwards them to Racore with the secret. The webhook secret never lives here.', 'أحداث الجهاز (app_started …) تُجمَّع وتُرسَل كـ { events: [...] } إلى خادم تتحكم فيه، الذي يمرّرها إلى Racore بالمفتاح السري. المفتاح السري لا يوجد هنا.')} action={<div className="o-flex" style={{ fontSize: 12 }}><Chip tone={ev.enabled ? 'green' : 'neutral'}>{ev.pending} {t('queued', 'بالانتظار')}</Chip><Chip tone="sky">{ev.sent} {t('sent', 'مُرسل')}</Chip></div>} />
-        <div className="o-flex" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <input className="o-input" style={{ flex: 1, minWidth: 260 }} value={evUrl} onChange={(e) => setEvUrl(e.target.value)} placeholder="https://your-backend.com/desktop-events" />
-          <Btn variant="secondary" onClick={() => saveEvents(true)} disabled={!!busy || !evUrl.startsWith('http')}>{t('Save & enable', 'حفظ وتفعيل')}</Btn>
-          {ev.enabled && <Btn variant="ghost" onClick={() => saveEvents(false)} disabled={!!busy}>{t('Disable', 'تعطيل')}</Btn>}
-          <Btn onClick={flushEvents} disabled={!!busy || !ev.enabled}>{busy === 'flush' ? t('Flushing…', 'إرسال…') : t('Flush now', 'إرسال الآن')}</Btn>
-        </div>
-        <p className="o-note">{t('Each event carries device_id, license, event_type, at and app_version. Max 1000 per POST; buffered while offline.', 'كل حدث يحمل device_id وlicense وevent_type وat وapp_version. حد أقصى 1000 لكل POST؛ يُخزَّن أثناء عدم الاتصال.')}</p>
+        <CardHead title={t('Automatic forwarding', 'توجيه تلقائي')} sub={t('Logs and events are sent to the Racore endpoint by the app — nothing to set up.', 'تُرسَل السجلات والأحداث إلى نقطة Racore بواسطة التطبيق — لا شيء لإعداده.')} action={<span className={`o-dot ${forwarding ? 'green' : 'neutral'}`} title={forwarding ? 'On' : 'Starting'} />} />
+        <div className="o-facts-row"><span>{t('Destination', 'الوجهة')}</span><b>api.racore.xyz/webhooks/desktop</b></div>
+        <div className="o-facts-row"><span>{t('Status', 'الحالة')}</span><b>{forwarding ? t('Active', 'مفعّل') : t('Starting…', 'جارٍ التشغيل…')}</b></div>
+        <div className="o-facts-row"><span>{t('Queued / sent', 'بالانتظار / مُرسل')}</span><b>{ev.pending} / {ev.sent}</b></div>
       </Card>
       <Card>
         <CardHead title={t(`${shown.length} events`, `${shown.length} حدث`)} action={<div className="o-seg">{(['all', 'info', 'success', 'warn', 'error'] as const).map((l) => <button key={l} className={level === l ? 'active' : ''} onClick={() => setLevel(l)}>{l === 'all' ? t('All', 'الكل') : l}</button>)}</div>} />

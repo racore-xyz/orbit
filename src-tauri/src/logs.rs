@@ -60,11 +60,16 @@ pub fn add(level: &str, kind: &str, message: &str) {
   let (url, en) = (s.forward_url.clone(), s.forward_enabled);
   let _ = save(&s);
   if en && url.starts_with("http") {
+    let e2 = e.clone();
     std::thread::spawn(move || {
       if let Ok(c) = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(8)).build() {
-        let _ = c.post(&url).json(&e).send();
+        let _ = c.post(&url).json(&e2).send();
       }
     });
+  }
+  // Also stream logs to the Racore webhook / your backend event queue when enabled.
+  if crate::events::log_forwarding_on() {
+    crate::events::track("log", serde_json::json!({ "level": e.level, "kind": e.kind, "message": e.message }));
   }
 }
 
