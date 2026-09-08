@@ -621,6 +621,34 @@ fn provider_env_status() -> serde_json::Value {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// One-off support/maintenance CLI, handled before the GUI starts. Returns true if it did something.
+/// `--reset-workspace` wipes the local workspace and all working data; `--activate <code>` links a license.
+pub fn cli_maybe() -> bool {
+  let args: Vec<String> = std::env::args().collect();
+  let mut handled = false;
+  if args.iter().any(|a| a == "--reset-workspace") {
+    match workspace::delete("all".into()) { Ok(m) => println!("reset-workspace: {m}"), Err(e) => println!("reset-workspace error: {e}") }
+    let d = std::env::var("APPDATA").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir()).join("orbit");
+    for f in ["jobs.json", "log_center.json", "events.json", "quota.json", "racore.json"] { let _ = std::fs::remove_file(d.join(f)); }
+    println!("reset-workspace: jobs, logs, events, quota and license state cleared");
+    handled = true;
+  }
+  if let Some(i) = args.iter().position(|a| a == "--activate") {
+    let code = args.get(i + 1).cloned().unwrap_or_default();
+    if code.trim().is_empty() { println!("activate error: missing license code"); std::process::exit(2); }
+    match racore::login(code) { Ok(v) => println!("activate: {v}"), Err(e) => { println!("activate error: {e}"); std::process::exit(1); } }
+    handled = true;
+  }
+  if args.iter().any(|a| a == "--test-ai") {
+    match llm::complete(Some("racore".into()), None, "Reply with the single word OK.".into(), "ping".into(), 16) {
+      Ok(r) => println!("test-ai: {}", r.replace('\n', " ")),
+      Err(e) => { println!("test-ai error: {e}"); std::process::exit(1); }
+    }
+    handled = true;
+  }
+  handled
+}
+
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
