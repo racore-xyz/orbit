@@ -1415,8 +1415,7 @@ function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<
   const [err, setErr] = useState('');
   const [gmail, setGmail] = useState({ address: '', app_password: '' });
   const [gmailOk, setGmailOk] = useState(false);
-  const [llm, setLlm] = useState({ provider: 'openai', key: '' });
-  const [llmOk, setLlmOk] = useState(false);
+  const [lic, setLic] = useState({ code: '', ok: false });
   const total = 3;
   const persist = async (patch: Partial<WsSummary['workspace']['onboarding']> = {}) => {
     const w = { ...ws.workspace, mode, profile: p, onboarding: { ...ws.workspace.onboarding, step, ...patch } };
@@ -1446,9 +1445,9 @@ function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<
       setGmailOk(true); void invoke('workspace_log', { kind: 'integration', text: `Gmail connected as ${gmail.address}` });
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
-  const saveLlm = async () => {
+  const activateLic = async () => {
     setBusy(true); setErr('');
-    try { await invoke('llm_set_key', { provider: llm.provider, key: llm.key }); await invoke('llm_set_default', { provider: llm.provider, model: '' }); setLlmOk(true); void invoke('workspace_log', { kind: 'integration', text: `${llm.provider} API key saved` }); }
+    try { await invoke('racore_login', { licenseCode: lic.code.trim() }); setLic({ ...lic, ok: true }); void invoke('workspace_log', { kind: 'integration', text: 'Racore license activated' }); }
     catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
   const field = (k: keyof WsProfile, label: string, ph = '', full = false, area = false) => (
@@ -1523,13 +1522,12 @@ function Onboarding({ t, ws, done }: { t: T; ws: WsSummary; done: () => Promise<
                 <Btn size="sm" onClick={connectGmail} disabled={busy || !gmail.address || !gmail.app_password}>{t('Connect Gmail (SMTP + IMAP)', 'ربط Gmail (SMTP + IMAP)')}</Btn>
               </div>
               <div className="o-onb-card">
-                <div className="o-flex"><IconTile icon={KeyRound} tone={llmOk ? 'green' : 'violet'} /><b>{t('LLM API key', 'مفتاح نموذج اللغة')}</b>{llmOk && <Chip tone="green">{t('Saved', 'محفوظ')}</Chip>}</div>
-                <p className="o-note" style={{ marginTop: 6 }}>{t('Drafts emails in your style. Stored in Windows Credential Manager.', 'يصيغ الرسائل بأسلوبك. يُحفظ في Windows Credential Manager.')}</p>
+                <div className="o-flex"><IconTile icon={KeyRound} tone={lic.ok ? 'green' : 'violet'} /><b>{t('Activate license', 'تفعيل الترخيص')}</b>{lic.ok && <Chip tone="green">{t('Active', 'مفعّل')}</Chip>}</div>
+                <p className="o-note" style={{ marginTop: 6 }}>{t('Enter your license code — AI runs through the Racore gateway (api.racore.xyz). No API keys to manage.', 'أدخل كود الترخيص — الذكاء الاصطناعي يعمل عبر بوابة Racore (api.racore.xyz). بدون إدارة مفاتيح.')}</p>
                 <div className="o-form-grid" style={{ marginTop: 10 }}>
-                  <label className="o-field">{t('Provider', 'المزوّد')}<select value={llm.provider} onChange={(e) => setLlm({ ...llm, provider: e.target.value })}><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="google">Google Gemini</option><option value="mistral">Mistral</option><option value="groq">Groq</option><option value="openrouter">OpenRouter</option></select></label>
-                  <label className="o-field">API key<input type="password" value={llm.key} onChange={(e) => setLlm({ ...llm, key: e.target.value })} /></label>
+                  <label className="o-field" style={{ gridColumn: '1 / -1' }}>{t('License code', 'كود الترخيص')}<input value={lic.code} onChange={(e) => setLic({ ...lic, code: e.target.value })} placeholder="orbit_xxxxxxxxxxxxxxxxxxxxxxxx" /></label>
                 </div>
-                <Btn size="sm" onClick={saveLlm} disabled={busy || !llm.key}>{t('Save key', 'حفظ المفتاح')}</Btn>
+                <Btn size="sm" onClick={activateLic} disabled={busy || !lic.code.trim()}>{busy ? t('Activating…', 'جاري التفعيل…') : lic.ok ? t('Re-activate', 'إعادة تفعيل') : t('Activate', 'تفعيل')}</Btn>
               </div>
             </div>
           </>
