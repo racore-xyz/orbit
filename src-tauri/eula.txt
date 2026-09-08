@@ -1,0 +1,65 @@
+orbit. Growth OS — End User License Agreement
+
+Publisher: racore.xyz
+Product: orbit. Growth OS
+Copyright (c) 2026 racore.xyz. All rights reserved.
+
+IMPORTANT — READ CAREFULLY. By installing, copying, or otherwise using
+orbit. Growth OS (the "Software"), you agree to be bound by the terms of
+this End User License Agreement (the "Agreement"). If you do not agree,
+do not install or use the Software.
+
+1. LICENSE GRANT
+   Subject to your compliance with this Agreement and to a valid license
+   key issued by racore.xyz, racore.xyz grants you a personal,
+   non-exclusive, non-transferable, revocable license to install and use
+   the Software on the number of devices permitted by your license.
+
+2. LICENSE ACTIVATION
+   The Software requires activation with a valid license code through the
+   racore.xyz license gateway. Each license code may be bound to a limited
+   number of devices. Activation records a device identifier with
+   racore.xyz solely to enforce these limits and to provide the service.
+
+3. RESTRICTIONS
+   You may not (a) resell, sublicense, rent, or lease the Software;
+   (b) reverse engineer, decompile, or disassemble the Software except to
+   the extent permitted by applicable law; (c) remove or alter any
+   proprietary notices; or (d) use the Software to violate any applicable
+   law or the rights of any third party.
+
+4. SERVICES AND DATA
+   The Software connects to racore.xyz services to validate your license
+   and to route AI features through the racore.xyz gateway. Operational
+   events (such as activation and usage signals) may be sent to racore.xyz
+   to operate, secure, and improve the service. You are responsible for
+   the content you process with the Software and for the mailboxes and
+   accounts you connect to it.
+
+5. OWNERSHIP
+   The Software is licensed, not sold. racore.xyz and its licensors retain
+   all right, title, and interest in and to the Software, including all
+   intellectual property rights.
+
+6. DISCLAIMER OF WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+7. LIMITATION OF LIABILITY
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL racore.xyz BE
+   LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE
+   DAMAGES, OR ANY LOSS OF PROFITS OR DATA, ARISING OUT OF OR RELATED TO
+   YOUR USE OF THE SOFTWARE.
+
+8. TERMINATION
+   This Agreement is effective until terminated. It terminates
+   automatically if you breach any of its terms, or if your license is
+   revoked or expires. Upon termination you must stop using and remove the
+   Software.
+
+9. GOVERNING LAW
+   This Agreement is governed by the laws applicable at the principal place
+   of business of racore.xyz, without regard to conflict-of-law principles.
+
+For questions about this Agreement, contact racore.xyz.

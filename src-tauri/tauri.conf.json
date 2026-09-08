@@ -42,7 +42,11 @@
     "externalBin": [
       "binaries/orbit-bridge"
     ],
-    "publisher": "orbit.",
+    "publisher": "racore.xyz",
+    "homepage": "https://racore.xyz",
+    "copyright": "Copyright (c) 2026 racore.xyz. All rights reserved.",
+    "license": "LicenseRef-racore-EULA",
+    "licenseFile": "eula.txt",
     "shortDescription": "orbit. Growth OS \u2014 agentic go-to-market workspace",
     "longDescription": "Lead Finder, Market Research, campaigns and integrations powered by Agent Reach. Ships with everything it needs: no Python or Node.js required.",
     "windows": {

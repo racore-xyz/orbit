@@ -2,6 +2,12 @@
 name = "orbit-growth-os"
 version = "0.1.0"
 edition = "2021"
+description = "orbit. Growth OS — agentic go-to-market workspace"
+authors = ["racore.xyz"]
+homepage = "https://racore.xyz"
+license = "LicenseRef-racore-EULA"
+license-file = "eula.txt"
+publish = false
 
 [lib]
 name = "orbit_growth_os_lib"
