@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "notes": "Orbit Growth OS v0.1.0 \u2014 agentic go-to-market workspace with built-in MCP server and auto-updates.",
+  "pub_date": "2026-09-10T13:40:17Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTQU16cW5OdjFLc0hVNUlQSDFxeE0yaWltTDFCT242aFRBM3czSG1kbU9UTFh2RlI1ZGtvSURQYmxGejJzNGJIYTVDR2dvcVIzakNKUW9ZdVBhdjJHZDVBS1B0YXF5THdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDQ1OTA3CWZpbGU6T3JiaXQgR3Jvd3RoIE9TXzAuMS4wX3g2NC1zZXR1cC5leGUKRDV3ZnRyR0MxbUwvZWllbHdVdEozNXB5OEl1QWdzOUNHbE95S1IrOFRpVzhyVC9kd2hUV0xvbUhsRTNiVkwwN0xYT1hWaXhwQm1qQmxTY2wwWGZJQlE9PQo=",
+      "url": "https://github.com/racore-xyz/orbit/releases/download/v0.1.0/Orbit%20Growth%20OS_0.1.0_x64-setup.exe"
+    }
+  }
+}
