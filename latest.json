@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0",
-  "notes": "Orbit Growth OS v0.1.0 \u2014 agentic go-to-market workspace with built-in MCP server and auto-updates.",
-  "pub_date": "2026-09-10T13:40:17Z",
+  "version": "0.2.0",
+  "notes": "Orbit Growth OS v0.2.0 \u2014 license lock (app stays locked without a valid license), editable campaigns with per-campaign follow-ups, jobs filters, duplicate removal, outreach labels, email attachments, ATS letter grades.",
+  "pub_date": "2026-09-12T23:47:28Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTQU16cW5OdjFLc0hVNUlQSDFxeE0yaWltTDFCT242aFRBM3czSG1kbU9UTFh2RlI1ZGtvSURQYmxGejJzNGJIYTVDR2dvcVIzakNKUW9ZdVBhdjJHZDVBS1B0YXF5THdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MDQ1OTA3CWZpbGU6T3JiaXQgR3Jvd3RoIE9TXzAuMS4wX3g2NC1zZXR1cC5leGUKRDV3ZnRyR0MxbUwvZWllbHdVdEozNXB5OEl1QWdzOUNHbE95S1IrOFRpVzhyVC9kd2hUV0xvbUhsRTNiVkwwN0xYT1hWaXhwQm1qQmxTY2wwWGZJQlE9PQo=",
-      "url": "https://github.com/racore-xyz/orbit/releases/download/v0.1.0/Orbit.Growth.OS_0.1.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTQU16cW5OdjFLc01FSkZNbUphK2E4V2RHU2hyUmE3b1d3ZnJOVkVYZTVZdzhBd0lFTkh3RG5oVlhyYW1TNC9Fd21jNGZHcVFYYTlFZUxVMXpsWVVXZEdJRzZIaGk1d2cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MjU2Mzg1CWZpbGU6T3JiaXQgR3Jvd3RoIE9TXzAuMi4wX3g2NC1zZXR1cC5leGUKaUZUM2tvLzIrTTNhaisydmE1WUE5M2p1Y01Yd3Nxa1ByUllFSkwrdXh6QkxxTkNCMjgwZWpMb0dHMVY1NkI0T1QwK3phcEdwcVdIRGZaWnNIWllJQ1E9PQo=",
+      "url": "https://github.com/racore-xyz/orbit/releases/download/v0.2.0/Orbit.Growth.OS_0.2.0_x64-setup.exe"
     }
   }
 }
